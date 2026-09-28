@@ -150,7 +150,7 @@ async def test_invalid_searches_do_not_make_requests(make_client, kwargs):
     assert calls == []
 
 
-@pytest.mark.parametrize("status", [400, 401, 403,404, 429, 500, 302])
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 429, 500, 302])
 async def test_errors_are_sanitized_and_never_retried(make_client, status):
     client, calls = make_client(
         lambda _: httpx.Response(
