@@ -22,10 +22,10 @@ async def test_discovery_exposes_only_read_only_tools(mcp_client):
     tools = {tool.name: tool for tool in await client.list_tools()}
     assert set(tools) == {"search", "fetch", "search_wos"}
     for tool in tools.values():
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        assert "ctx" not in tool.inputSchema["properties"]
-        assert "api_key" not in tool.inputSchema["properties"]
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.destructive_hint is False
+        assert "ctx" not in tool.input_schema["properties"]
+        assert "api_key" not in tool.input_schema["properties"]
     assert requests == []
 
 
