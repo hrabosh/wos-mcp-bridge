@@ -20,7 +20,15 @@ async def mcp_client(make_client, monkeypatch):
 async def test_discovery_exposes_only_read_only_tools(mcp_client):
     client, requests = mcp_client
     tools = {tool.name: tool for tool in await client.list_tools()}
-    assert set(tools) == {"search", "fetch", "search_wos"}
+    assert set(tools) == {
+        "search",
+        "fetch",
+        "search_wos",
+        "search_literature",
+        "resolve_article",
+        "get_article",
+        "get_article_section",
+    }
     for tool in tools.values():
         assert tool.annotations.read_only_hint is True
         assert tool.annotations.destructive_hint is False
