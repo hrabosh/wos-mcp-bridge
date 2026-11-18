@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add authenticated Streamable HTTP, OAuth resource discovery and a process health
+  endpoint for self-hosted deployments.
+- Add an explicit literature profile for Europe PMC and OpenAlex without a
+  Web of Science key. Keep stdio and the seven-tool full profile as defaults.
+- Test real stdio and loopback HTTP with synthetic upstream responses.
+
 ## 0.1.0 — 2026-11-18
 
 The first packaged release combines Web of Science Core Collection search with

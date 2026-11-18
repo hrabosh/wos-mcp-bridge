@@ -2,7 +2,7 @@
 
 The version, runtime dependency ranges, development dependencies, URLs and license
 are declared in `pyproject.toml`. The build backend is setuptools 84.2.1; uv 0.13.9
-resolves and runs the development/deployment environment. `uv.lock` records exact
+resolves and runs the CI and release environment. `uv.lock` records exact
 transitive versions, markers and artifact hashes. The tested lock uses
 FastMCP 4.1.7 and MCP Python SDK 2.3.0.
 
@@ -33,13 +33,18 @@ uv sync --locked --no-dev --python 3.12
 uv run --locked --no-dev wos-mcp-bridge
 ```
 
-The latter starts stdio and needs `WOS_API_KEY`. It does not open an HTTP endpoint.
+The latter starts stdio with the selected provider profile. To serve HTTP, use
+the [self-hosted deployment settings](usage.md#self-hosted-streamable-http).
 Managed hosting keeps `server.py:mcp`. A pip-based host can load it from a
 checkout after installing the generated runtime dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+FastMCP Gateway uses its bundled uv to install this export. The
+requirements-only installation and entrypoint were verified with uv 0.13.7 in
+a clean Python 3.12 environment.
 
 To install the package and its CLI in that same environment, then run
 `python -m pip install --no-deps .`. A regular `pip install .` or wheel installation
@@ -111,8 +116,12 @@ through subprocess exit. The fixture supplies synthetic credentials and blocks
 network access at the provider HTTP boundary for the successful path.
 
 This verifies installed subprocess interoperability with the locked MCP SDK.
-Run the [hosted transport checks in #8](https://github.com/hrabosh/wos-mcp-bridge/issues/8)
-before claiming compatibility with a particular hosted client and its OAuth flow.
+The offline suite also runs the ASGI factory on loopback with FastMCP 4.1.7,
+Uvicorn 0.54.0 and MCP Python SDK 2.3.0. It verifies token enforcement, discovery,
+response equivalence with stdio on protocol `2025-11-25`, and cancellation and
+shutdown on protocol `2026-07-28`. It uses synthetic provider responses.
+Run the [hosted client check](usage.md#connect-to-chatgpt)
+on the exact deployed revision before recording compatibility with its OAuth flow.
 
 A pipx installation was also checked against the local wheel, outside the checkout:
 

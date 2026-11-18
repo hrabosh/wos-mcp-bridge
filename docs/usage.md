@@ -4,8 +4,12 @@
 
 | Variable | Use |
 | --- | --- |
-| `WOS_API_KEY` | Required at server startup. Use a Clarivate Starter API key with access to WoS Core Collection. |
+| `WOS_MCP_PROFILE` | `full` (default) exposes all seven tools. `literature` exposes only `search_literature`, `resolve_article`, `get_article`, and `get_article_section`. Restart to switch. |
+| `WOS_API_KEY` | Required at startup for `full`. Use a Clarivate Starter API key with access to WoS Core Collection. |
 | `OPENALEX_API_KEY` | Optional. Use an OpenAlex key for a higher request budget. |
+| `WOS_MCP_MIN_INTERVAL_SECONDS` | Minimum spacing of uncached requests per provider. Defaults to 1.1. Keep it at or above the spacing required by your provider plans. |
+| `WOS_MCP_CACHE_TTL_SECONDS` | In-memory cache TTL. Defaults to 900. Set to 0 to disable caching. |
+| `WOS_MCP_OPERATION_TIMEOUT_SECONDS` | Deadline per provider operation, including queue and rate-limit waits. Defaults to 30 and must be positive. |
 
 Set these through the MCP client or host's secret store. The bridge reads process
 environment variables. [The environment example](https://github.com/hrabosh/wos-mcp-bridge/blob/main/.env.example)
@@ -87,10 +91,52 @@ prevent resolution or full-text retrieval become MCP errors, rather than invente
 content or false `not_found` results. XML 403/404 returns available metadata with a
 warning. No retries or automatic extra pages are made.
 
-## Deploy from this repository
+## Deployment
+
+Run one process per credential boundary. All MCP callers admitted to an
+instance can use that instance's provider profile and quota. Store Clarivate
+and OpenAlex credentials in the process environment through your secret store.
+Those keys authenticate outbound requests to their providers. MCP callers use
+an independent OAuth access token to authenticate to the bridge.
+
+### Self-hosted Streamable HTTP
+
+Set these three values before starting the HTTP entrypoint.
+
+| Variable | Use |
+| --- | --- |
+| `WOS_MCP_HTTP_ORIGIN` | Public HTTPS origin, for example `https://mcp.example.com`. The MCP resource and token audience are `https://mcp.example.com/mcp`. Plain HTTP is accepted for a loopback origin for local checks. |
+| `WOS_MCP_AUTH_ISSUER` | Exact HTTPS issuer URL from provider discovery. Use a lowercase host, omit the default port and preserve the provider's trailing slash, if any. |
+| `WOS_MCP_AUTH_JWKS_URI` | HTTPS URL of the issuer's public signing keys. |
+
+Configure the issuer to mint expiring RS256 access tokens for the MCP resource
+with the `mcp:read` scope. Restrict who can receive that scope. MCP clients
+discover the issuer and scope via OAuth Protected Resource Metadata. Choose an
+issuer and client registration flow your MCP client supports.
+[FastMCP Remote OAuth](https://gofastmcp.com/docs/servers/auth/remote-oauth)
+describes the integration.
+
+```bash
+wos-mcp-bridge --transport http
+```
+
+The CLI binds to `127.0.0.1:8000` by default. Serve the selected public origin
+through an HTTPS reverse proxy that preserves the public Host header and supports
+streaming responses. Leave the backend reachable only from the proxy. FastMCP
+validates Host and Origin headers. The OAuth metadata and `GET /healthz` are
+public. A healthy process returns `{"status":"ok"}` after startup. The check uses
+no provider requests and gives no indication of a provider's current quota or
+availability. All MCP requests to `/mcp` require a valid token.
+
+An ASGI host can load the same factory as
+`wos_mcp_bridge.http_server:create_http_app` with its factory mode enabled. Run
+one worker and enable the ASGI lifespan. Configure access logs to omit
+authorization headers, credentials and tool bodies.
+
+### Managed hosting
 
 For a managed deployment, use a host that supplies **HTTPS and MCP-compatible OAuth**.
-[FastMCP Gateway](https://gofastmcp.com/docs/deployment/fastmcp-gateway) supports this setup.
+[FastMCP Gateway](https://www.prefect.io/fastmcp/hosting) supports this setup.
 
 1. Connect this repository to the host using a scoped repository grant.
 2. Select branch `main` and entrypoint **`server.py:mcp`**.
@@ -98,49 +144,51 @@ For a managed deployment, use a host that supplies **HTTPS and MCP-compatible OA
    locked checkout deployment. The entrypoint can load the package from this
    checkout after its runtime dependencies are available. Hosts that install the
    project can also use `python -m pip install .`.
-4. Add **`WOS_API_KEY`** in the host's secret environment settings.
+4. Add **`WOS_API_KEY`** in the host's secret environment settings for the full
+   profile, or set **`WOS_MCP_PROFILE=literature`**.
 5. **Enable authentication** and restrict access to your own account/organization.
 6. Deploy and copy the MCP URL supplied by the host.
 
-Optionally add **`OPENALEX_API_KEY`** for a higher OpenAlex request budget. It is sent
-only to OpenAlex as an authorization header, never exposed as a tool argument.
-Europe PMC needs no API key. `WOS_API_KEY` is required at server startup. All seven tools have read-only, nondestructive, idempotent MCP annotations
-and return matching JSON text and structured content for ChatGPT/MCP clients.
-
-Keep credentials in the host's secret store and use the host's authentication for
-MCP clients. Confirm your institution and provider permit the host to process the
-credential and records for the intended use.
+Restrict network and client access to the authenticated gateway. Confirm your
+institution and provider permit the host to process the credential and records
+for the intended use.
 
 ### Connect to ChatGPT
 
 In an account/workspace that supports developer-mode MCP apps, create an app using
 the deployed **MCP URL**, choose **OAuth**, and complete the host's authorization flow.
 Store Clarivate's API key in the server environment. Set up client authentication through the host.
-Check the [current OpenAI instructions](https://developers.openai.com/api/docs/guides/developer-mode)
+Check the [current OpenAI instructions](https://developers.openai.com/api/docs/guides/custom-mcp-server)
 for the applicable interface and workspace permissions.
 
-Confirm discovery of all seven tools listed above, then try:
+Verify the deployment revision, check that an unauthenticated request to its MCP
+endpoint is denied, then confirm discovery in ChatGPT after OAuth. With the full
+profile, expect all seven tools and try:
 
 > Use the Web of Science connector's search_wos tool exactly once with query
 > TS=(quantum computing), limit 1, page 1, and sort RS+D. Show the total result
 > count, title, and DOI. Do not substitute general web-search results.
 
-This live check verifies the selected host, OAuth flow, client and upstream access.
-Run it with a key entitled to query the Core Collection.
+Run the query with a key entitled to search the Core Collection. For
+`literature`, expect the four named tools and make one `search_literature` call
+with limit 1. Record the deployment revision, client, transport, discovery and
+result status in the release checks. Keep tokens, credentials and result payloads
+out of release logs.
 
 ## Operating limits
 
-The HTTP client reuses pooled connections and is closed on server shutdown.
-Only fixed API GET endpoints on `api.clarivate.com`, `www.ebi.ac.uk` (Europe PMC
-REST path), and `api.openalex.org` are used. Outbound redirects
-are not followed. Error messages do not echo upstream bodies or credentials.
+Provider clients reuse pooled connections and close on server shutdown.
+Provider requests use fixed GET endpoints on `api.clarivate.com`, `www.ebi.ac.uk`
+(Europe PMC REST path), and `api.openalex.org`. They refuse HTTP redirects.
+Provider errors omit response bodies and credentials. The self-hosted HTTP
+entrypoint also fetches public signing keys from the configured JWKS URL.
 
-Uncached requests to each upstream are serialized and spaced at least **1.1 seconds**
-apart. Each provider operation has a **30-second overall deadline**, including queueing,
+By default, uncached requests to each upstream are serialized and spaced at least
+**1.1 seconds** apart. Each provider operation has a **30-second overall deadline**, including queueing,
 rate-limit waits and network I/O, plus a **10-second connection timeout**. An article
 operation can compose multiple provider calls, each with its own deadline.
 Retries require a separate client request.
-A **15-minute, 128-entry in-memory cache** (at most 16 MiB of serialized keys and
+A **15-minute, 128-entry in-memory cache** by default (at most 16 MiB of serialized keys and
 values) reduces repeated searches and lets fetches reuse recently returned search
 records. The expiry stays fixed at insertion. The cache returns copies of stored values.
 
@@ -165,7 +213,7 @@ Redirects and environment proxies are disabled. `defusedxml` protects XML parsin
 
 | Symptom | Action |
 | --- | --- |
-| Missing `WOS_API_KEY` | Set the key in the server environment and restart. |
+| Missing `WOS_API_KEY` | For WoS, set the key in the environment and restart. For the four literature tools, set `WOS_MCP_PROFILE=literature` and restart. |
 | Clarivate 400 | Check field tags/query syntax; start with `TS=(quantum computing)`. |
 | Clarivate 401 | Check that the replacement key belongs to an active Starter subscription. |
 | Clarivate 403 | Check API/database entitlement. |

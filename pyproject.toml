@@ -25,6 +25,8 @@ dependencies = [
     "httpx>=0.28.1,<0.29",
     "pydantic>=2.13.4,<3",
     "defusedxml>=0.7.1,<0.8",
+    "starlette>=1.10,<2",
+    "uvicorn>=0.54,<1",
 ]
 
 [project.urls]
@@ -43,9 +45,6 @@ dev = [
     "twine==7.0.0",
     "packaging>=25,<27",
 ]
-
-[tool.uv]
-required-version = "==0.13.9"
 
 [project.scripts]
 wos-mcp-bridge = "wos_mcp_bridge.__main__:main"

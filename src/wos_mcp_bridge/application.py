@@ -15,7 +15,7 @@ from .wos_client import WosClient
 
 @dataclass(frozen=True)
 class Services:
-    wos: WosClient
+    wos: WosClient | None
     literature: LiteratureClient
 
 
@@ -23,13 +23,15 @@ class Services:
 async def open_services(settings: Settings) -> AsyncGenerator[Services]:
     """Register cleanup immediately, including failures partway through startup."""
     async with AsyncExitStack() as resources:
-        wos = WosClient(
-            settings.wos_api_key,
-            min_interval=settings.min_interval,
-            cache_ttl=settings.cache_ttl,
-            operation_timeout=settings.operation_timeout,
-        )
-        resources.push_async_callback(wos.aclose)
+        wos = None
+        if settings.profile == "full":
+            wos = WosClient(
+                settings.wos_api_key,
+                min_interval=settings.min_interval,
+                cache_ttl=settings.cache_ttl,
+                operation_timeout=settings.operation_timeout,
+            )
+            resources.push_async_callback(wos.aclose)
         europe_pmc = EuropePmcClient(
             min_interval=settings.min_interval,
             cache_ttl=settings.cache_ttl,

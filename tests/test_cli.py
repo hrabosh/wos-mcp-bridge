@@ -25,3 +25,22 @@ def test_module_version_works_without_credentials_outside_checkout(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f"wos-mcp-bridge {version('wos-mcp-bridge')}"
+
+
+def test_http_cli_requires_auth_settings_before_listening(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-m", "wos_mcp_bridge", "--transport", "http"],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "FASTMCP_CHECK_FOR_UPDATES": "off",
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "WOS_MCP_HTTP_ORIGIN must be" in result.stderr
