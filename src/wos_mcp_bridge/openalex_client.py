@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from .article_xml import plain_text
 from .europe_pmc import _optional_id, identifier, safe_url
+from .http_support import CacheExpiry
 from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
 from .models import ArticleRecord, Bibliography
 
@@ -22,10 +23,14 @@ class OpenAlexClient:
     async def aclose(self) -> None:
         await self._api.aclose()
 
-    async def resolve(self, value: str) -> JsonObject:
+    async def resolve(
+        self, value: str, *, source_expiries: list[CacheExpiry | None] | None = None
+    ) -> JsonObject:
         kind, key = identifier(value)
         if kind not in {"doi", "pmid"}:
-            raise LiteratureError("OpenAlex lookup requires a DOI or PMID.")
+            raise LiteratureError(
+                "OpenAlex lookup requires a DOI or PMID.", code="invalid_input", source="OpenAlex"
+            )
         # Encode slash/colon so even adversarial DOI suffixes cannot alter host or query.
         path = "works/" + quote(
             f"https://doi.org/{key}" if kind == "doi" else f"pmid:{key}", safe=""
@@ -36,8 +41,12 @@ class OpenAlexClient:
             )
         except LiteratureError as exc:
             if exc.status == 404:
+                if source_expiries is not None:
+                    source_expiries.append(None)
                 return {"article": None, "retrieval": None}
             raise
+        if source_expiries is not None:
+            source_expiries.append(self._api.cache_expiry(path))
         return {"article": data, "retrieval": retrieval}
 
     @staticmethod

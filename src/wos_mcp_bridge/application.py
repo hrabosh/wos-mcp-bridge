@@ -45,4 +45,6 @@ async def open_services(settings: Settings) -> AsyncGenerator[Services]:
             operation_timeout=settings.operation_timeout,
         )
         resources.push_async_callback(openalex.aclose)
-        yield Services(wos=wos, literature=LiteratureClient(europe_pmc, openalex))
+        literature = LiteratureClient(europe_pmc, openalex)
+        resources.callback(literature.clear_article_cache)
+        yield Services(wos=wos, literature=literature)

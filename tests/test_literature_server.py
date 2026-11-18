@@ -79,3 +79,5 @@ async def test_section_error_is_actionable(literature_mcp):
     )
     assert result.is_error
     assert "Use get_article" in result.content[0].text
+    assert result.structured_content is None
+    assert result.meta["io.github.hrabosh.wos-mcp-bridge/error"]["code"] == "not_found"

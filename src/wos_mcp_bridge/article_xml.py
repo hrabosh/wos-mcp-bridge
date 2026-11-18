@@ -133,12 +133,13 @@ def extract_jats(raw: bytes, *, expected_pmcid: str | None = None) -> JsonObject
 
 def validate_text(value: object, name: str, maximum: int) -> str:
     if not isinstance(value, str):
-        raise LiteratureError(f"{name} must be a string.")
+        raise LiteratureError(f"{name} must be a string.", code="invalid_input")
     if re.search(r"[\x00-\x1f\x7f]", value):
-        raise LiteratureError(f"{name} must not contain control characters.")
+        raise LiteratureError(f"{name} must not contain control characters.", code="invalid_input")
     value = value.strip()
     if not value or len(value) > maximum:
         raise LiteratureError(
-            f"{name} must contain 1-{maximum} characters without control characters."
+            f"{name} must contain 1-{maximum} characters without control characters.",
+            code="invalid_input",
         )
     return value

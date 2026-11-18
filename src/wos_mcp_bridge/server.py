@@ -11,7 +11,7 @@ from fastmcp.server.auth import AuthProvider
 
 from .application import Services, open_services
 from .config import Profile, Settings, read_profile
-from .tools import register_literature_tools, register_wos_tools
+from .tools import OperationLogging, register_literature_tools, register_wos_tools
 
 WOS_INSTRUCTIONS = (
     "Read-only WoS Core Collection search. Convert topics to WoS advanced syntax, "
@@ -61,6 +61,7 @@ def create_server(
         "Web of Science" if profile == "full" else "Scientific Literature",
         lifespan=lifespan,
         auth=auth,
+        middleware=[OperationLogging()],
         mask_error_details=True,
         instructions=(WOS_INSTRUCTIONS if profile == "full" else "") + LITERATURE_INSTRUCTIONS,
     )

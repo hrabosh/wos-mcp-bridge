@@ -15,6 +15,8 @@ from urllib.parse import quote, urlsplit
 import httpx
 from pydantic import ValidationError
 
+from .diagnostics import measure, record_metric
+from .errors import BridgeError, upstream_error_code
 from .http_support import (
     Clock,
     CooldownActive,
@@ -29,6 +31,7 @@ from .http_support import (
 from .models import Bibliography, WosRecord
 
 BASE_URL = "https://api.clarivate.com/apis/wos-starter/v1/"
+SOURCE = "Clarivate"
 UID_PATTERN = re.compile(r"WOS:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SORT_FIELDS = {"RS+D", "RS+A", "PY+D", "PY+A", "LD+D", "LD+A", "TC+D", "TC+A"}
 MAX_CACHE_ENTRIES = 128
@@ -47,8 +50,10 @@ QUOTA_HEADERS = (
 JsonObject = dict[str, Any]
 
 
-class WosError(Exception):
+class WosError(BridgeError):
     """An actionable error safe to return to an MCP caller."""
+
+    default_source = SOURCE
 
 
 class WosClient:
@@ -73,7 +78,10 @@ class WosClient:
         sleep: Sleep | None = None,
     ) -> None:
         if not api_key.strip():
-            raise WosError("Set WOS_API_KEY in the server environment, not in chat or source code.")
+            raise WosError(
+                "Set WOS_API_KEY in the server environment, not in chat or source code.",
+                code="auth",
+            )
         validate_request_limits(operation_timeout, max_response_bytes)
         self._cache = ResponseCache(cache_ttl, cache_max_entries, cache_max_bytes, clock=clock)
         self._policy = RequestPolicy(min_interval, clock=clock, sleep=sleep)
@@ -100,16 +108,23 @@ class WosClient:
     ) -> JsonObject:
         """Search one page using WoS advanced syntax; never paginate automatically."""
         if not isinstance(query, str):
-            raise WosError("query must be a Web of Science advanced-search string.")
+            raise WosError(
+                "query must be a Web of Science advanced-search string.", code="invalid_input"
+            )
         query = query.strip()
         if not query or len(query) > 4000 or any(ord(c) < 32 for c in query):
-            raise WosError("Use a query of 1-4000 characters without control characters.")
+            raise WosError(
+                "Use a query of 1-4000 characters without control characters.", code="invalid_input"
+            )
         if type(limit) is not int or not 1 <= limit <= 50:
-            raise WosError("limit must be an integer from 1 to 50.")
+            raise WosError("limit must be an integer from 1 to 50.", code="invalid_input")
         if type(page) is not int or not 1 <= page <= 2_147_483_647:
-            raise WosError("page must be a positive 32-bit integer.")
+            raise WosError("page must be a positive 32-bit integer.", code="invalid_input")
         if sort not in SORT_FIELDS:
-            raise WosError("Unsupported sort. Use RS+D for relevance or PY+D for newest first.")
+            raise WosError(
+                "Unsupported sort. Use RS+D for relevance or PY+D for newest first.",
+                code="invalid_input",
+            )
 
         key = json.dumps(["search", query, limit, page, sort])
         if cached := self._cached(key):
@@ -126,7 +141,8 @@ class WosClient:
                 raise WosError("Unexpected search response structure from Clarivate.")
             if type(metadata.get("total")) is not int or metadata["total"] < 0:
                 raise WosError("Clarivate returned an invalid total result count.")
-            records = [_normalise(hit) for hit in data["hits"]]
+            with measure(SOURCE, "parse_ms"):
+                records = [_normalise(hit) for hit in data["hits"]]
             result = {
                 "query": query,
                 "database": "WOS",
@@ -147,14 +163,18 @@ class WosClient:
     async def fetch(self, uid: str) -> JsonObject:
         """Retrieve a WoS bibliographic record, not the corresponding article PDF."""
         if not isinstance(uid, str) or not UID_PATTERN.fullmatch(uid):
-            raise WosError("Use a WOS: accession ID returned by search, not a URL or DOI.")
+            raise WosError(
+                "Use a WOS: accession ID returned by search, not a URL or DOI.",
+                code="invalid_input",
+            )
         if envelope := self._cached(uid):
             return self._fetch_result(envelope)
         async with self._operation():
             envelope = self._cached(uid)
             if envelope is None:
                 data, retrieval = await self._request("documents/" + quote(uid, safe=""))
-                record = _normalise(data)
+                with measure(SOURCE, "parse_ms"):
+                    record = _normalise(data)
                 if record["id"] != uid:
                     raise WosError("Clarivate returned a different record ID than requested.")
                 envelope = {"record": record, "retrieval": retrieval}
@@ -183,21 +203,28 @@ class WosClient:
         self, path: str, params: JsonObject | None = None
     ) -> tuple[JsonObject, JsonObject]:
         """Called under the lock; issue one request without following redirects."""
-        await self._policy.wait()
+        with measure(SOURCE, "limiter_wait_ms"):
+            await self._policy.wait()
+        record_metric(SOURCE, "upstream_requests")
+        delay = None
         try:
-            async with self._http.stream("GET", path, params=params) as response:
-                if response.status_code == 429:
-                    self._policy.block(response.headers.get("retry-after"))
-                raw = (
-                    await read_bounded(response, self._max_response_bytes)
-                    if response.status_code == 200
-                    else b""
-                )
+            with measure(SOURCE, "network_ms"):
+                async with self._http.stream("GET", path, params=params) as response:
+                    if response.status_code == 429:
+                        delay = self._policy.block(response.headers.get("retry-after"))
+                    raw = (
+                        await read_bounded(response, self._max_response_bytes)
+                        if response.status_code == 200
+                        else b""
+                    )
+        except httpx.TimeoutException:
+            raise WosError("Clarivate operation timed out; retry later.", code="timeout") from None
         except ResponseTooLarge:
             raise WosError("Clarivate response exceeds the size limit.") from None
         except httpx.RequestError:
             raise WosError(
-                "Clarivate could not be reached. Check connectivity or retry later."
+                "Clarivate could not be reached. Check connectivity or retry later.",
+                code="upstream_unavailable",
             ) from None
 
         if response.status_code != 200:
@@ -213,10 +240,14 @@ class WosClient:
                 messages.get(
                     response.status_code, f"Clarivate returned HTTP {response.status_code}."
                 )
-                + " No automatic retry was made."
+                + " No automatic retry was made.",
+                code=upstream_error_code(response.status_code),
+                status=response.status_code,
+                retry_after_seconds=delay,
             )
         try:
-            data = decode_json(raw)
+            with measure(SOURCE, "parse_ms"):
+                data = decode_json(raw)
         except ValueError:
             raise WosError("Clarivate returned an invalid JSON response.") from None
         if not isinstance(data, dict):
@@ -232,16 +263,21 @@ class WosClient:
     @asynccontextmanager
     async def _operation(self) -> AsyncGenerator[None]:
         try:
-            async with asyncio.timeout(self._operation_timeout), self._policy.lock:
+            async with asyncio.timeout(self._operation_timeout), self._policy.acquire(SOURCE):
                 yield
         except TimeoutError:
-            raise WosError("Clarivate operation timed out; retry later.") from None
-        except CooldownActive:
-            raise WosError("Clarivate rate limit cooldown active; retry later.") from None
+            raise WosError("Clarivate operation timed out; retry later.", code="timeout") from None
+        except CooldownActive as exc:
+            raise WosError(
+                "Clarivate rate limit cooldown active; retry later.",
+                code="rate_limited",
+                retry_after_seconds=exc.retry_after_seconds,
+            ) from None
 
     def _cached(self, key: str) -> JsonObject | None:
         result = self._cache.get(key)
         if result is not None:
+            record_metric(SOURCE, "cache_hits")
             result["retrieval"]["cached"] = True
         return result
 

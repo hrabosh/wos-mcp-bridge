@@ -298,17 +298,16 @@ async def test_variant_responses_match_the_schema_without_false_defaults(make_cl
 
 
 def test_response_validation_errors_never_expose_untrusted_payloads():
-    from fastmcp.exceptions import ToolError
-
     from wos_mcp_bridge.models import WosSearchResponse
-    from wos_mcp_bridge.tools import _result
+    from wos_mcp_bridge.tools import ERROR_METADATA, _result
 
-    with pytest.raises(ToolError) as error:
-        _result(
-            {"query": "PRIVATE_RESPONSE_SECRET", "metadata": {"total": True}}, WosSearchResponse
-        )
-    assert "PRIVATE_RESPONSE_SECRET" not in str(error.value)
-    assert "invalid response" in str(error.value)
+    result = _result(
+        {"query": "PRIVATE_RESPONSE_SECRET", "metadata": {"total": True}}, WosSearchResponse
+    )
+    assert result.is_error and result.structured_content is None
+    assert result.meta[ERROR_METADATA]["code"] == "invalid_response"
+    assert "PRIVATE_RESPONSE_SECRET" not in repr(result)
+    assert "invalid response" in result.content[0].text
 
 
 async def test_incomplete_wos_author_list_stays_unknown_in_common_metadata(make_client):

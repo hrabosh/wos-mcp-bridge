@@ -10,7 +10,10 @@ from typing import TypedDict
 
 import httpx
 
+from .diagnostics import measure, record_metric
+from .errors import BridgeError, upstream_error_code
 from .http_support import (
+    CacheExpiry,
     Clock,
     CooldownActive,
     JsonObject,
@@ -32,6 +35,10 @@ API_URLS = {
 }
 
 
+def _cache_key(path: str, params: JsonObject | None) -> str:
+    return json.dumps([path, params], sort_keys=True)
+
+
 class ApiOptions(TypedDict, total=False):
     transport: httpx.AsyncBaseTransport | None
     min_interval: float
@@ -44,12 +51,10 @@ class ApiOptions(TypedDict, total=False):
     sleep: Sleep | None
 
 
-class LiteratureError(Exception):
+class LiteratureError(BridgeError):
     """Safe upstream or validation error; never includes response bodies."""
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
-        super().__init__(message)
-        self.status = status
+    default_source = "literature"
 
 
 class ApiClient:
@@ -92,9 +97,13 @@ class ApiClient:
         await self._http.aclose()
         self._cache.clear()
 
+    def cache_expiry(self, path: str, params: JsonObject | None = None) -> CacheExpiry | None:
+        return self._cache.expiry(_cache_key(path, params))
+
     def _cached(self, key: str) -> JsonObject | None:
         result = self._cache.get(key)
         if result is not None:
+            record_metric(self.source, "cache_hits")
             result["retrieval"]["cached"] = True
         return result
 
@@ -106,35 +115,24 @@ class ApiClient:
         parse: Callable[[bytes], JsonObject],
     ) -> tuple[JsonObject, JsonObject]:
         if ":" in path or path.startswith("/") or ".." in path.split("/"):
-            raise LiteratureError("Invalid API endpoint.")
-        key = json.dumps([path, params], sort_keys=True)
+            raise LiteratureError("Invalid API endpoint.", source=self.source, code="invalid_input")
+        key = _cache_key(path, params)
         if cached := self._cached(key):
             return cached["data"], cached["retrieval"]
         try:
-            async with asyncio.timeout(self._operation_timeout), self._policy.lock:
+            async with asyncio.timeout(self._operation_timeout), self._policy.acquire(self.source):
                 if cached := self._cached(key):
                     return cached["data"], cached["retrieval"]
-                await self._policy.wait()
-                async with self._http.stream("GET", path, params=params) as response:
-                    if response.status_code != 200:
-                        if response.status_code == 429:
-                            self._policy.block(response.headers.get("retry-after"))
-                        messages = {
-                            400: "rejected the query or identifier",
-                            401: "requires a valid API key in the server environment",
-                            403: "denied access",
-                            404: "has no matching record or accessible full text",
-                            429: "rate limit reached; retry later",
-                        }
-                        message = messages.get(
-                            response.status_code, f"returned HTTP {response.status_code}"
-                        )
-                        raise LiteratureError(
-                            f"{self.source} {message}. No automatic retry was made.",
-                            status=response.status_code,
-                        )
-                    raw = await read_bounded(response, self._max_response_bytes)
-                data = parse(raw)
+                with measure(self.source, "limiter_wait_ms"):
+                    await self._policy.wait()
+                record_metric(self.source, "upstream_requests")
+                with measure(self.source, "network_ms"):
+                    async with self._http.stream("GET", path, params=params) as response:
+                        if response.status_code != 200:
+                            self._raise_http_error(response)
+                        raw = await read_bounded(response, self._max_response_bytes)
+                with measure(self.source, "parse_ms"):
+                    data = parse(raw)
                 retrieval = {
                     "source": self.source,
                     "cached": False,
@@ -142,16 +140,52 @@ class ApiClient:
                 }
                 self._cache.put(key, {"data": data, "retrieval": retrieval})
                 return data, retrieval
-        except CooldownActive:
+        except CooldownActive as exc:
             raise LiteratureError(
-                f"{self.source} rate limit cooldown active; retry later.", status=429
+                f"{self.source} rate limit cooldown active; retry later.",
+                code="rate_limited",
+                source=self.source,
+                retry_after_seconds=exc.retry_after_seconds,
             ) from None
         except (TimeoutError, httpx.TimeoutException):
-            raise LiteratureError(f"{self.source} timed out; retry later.") from None
+            raise LiteratureError(
+                f"{self.source} timed out; retry later.",
+                code="timeout",
+                source=self.source,
+            ) from None
         except httpx.RequestError:
-            raise LiteratureError(f"{self.source} could not be reached; retry later.") from None
+            raise LiteratureError(
+                f"{self.source} could not be reached; retry later.",
+                code="upstream_unavailable",
+                source=self.source,
+            ) from None
         except ResponseTooLarge:
-            raise LiteratureError(f"{self.source} response exceeds the size limit.") from None
+            raise LiteratureError(
+                f"{self.source} response exceeds the size limit.",
+                source=self.source,
+            ) from None
+        except LiteratureError as exc:
+            if exc.source == LiteratureError.default_source:
+                exc.source = self.source
+            raise
+
+    def _raise_http_error(self, response: httpx.Response) -> None:
+        status = response.status_code
+        delay = self._policy.block(response.headers.get("retry-after")) if status == 429 else None
+        message = {
+            400: "rejected the query or identifier",
+            401: "requires a valid API key in the server environment",
+            403: "denied access",
+            404: "has no matching record or accessible full text",
+            429: "rate limit reached; retry later",
+        }.get(status, f"returned HTTP {status}")
+        raise LiteratureError(
+            f"{self.source} {message}. No automatic retry was made.",
+            code=upstream_error_code(status),
+            source=self.source,
+            status=status,
+            retry_after_seconds=delay,
+        )
 
     async def get_json(
         self,

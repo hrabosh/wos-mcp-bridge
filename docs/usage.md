@@ -200,6 +200,10 @@ Check Clarivate for the current quota.
 Each literature API has its own connection pool, request policy and validated response
 cache with the same default deadlines and limits. The cache has at most 128 entries
 and 16 MiB of serialized keys and values, plus Python object overhead.
+The literature service also reuses complete, validated articles for section reads
+within the original provider deadlines. This cache holds up to 32 articles and
+8 MiB of serialized article data per process. Setting the provider cache TTL
+to zero disables this reuse.
 Individual decoded upstream responses are capped at 8 MiB for every provider,
 including WoS JSON and Europe PMC XML. Only validated responses enter a cache.
 Cache hits do not extend expiry; callers receive
@@ -208,6 +212,22 @@ Concurrent identical successful calls share a result. Cancelling a request owner
 cancels its HTTP request. A waiting caller can then issue a replacement. For every provider, HTTP 429 honors `Retry-After`
 (seconds or HTTP date, capped at one hour, with a 60-second fallback) by rejecting new uncached calls during cooldown.
 Redirects and environment proxies are disabled. `defusedxml` protects XML parsing.
+
+## Operation logs
+
+At INFO level the bridge emits one standard Python log event per tool call through
+`fastmcp.wos_mcp_bridge.operations`. It includes an operation ID, tool, outcome,
+elapsed milliseconds, and provider counters and timings. `cache_hits` and
+`upstream_requests` count different events. `queue_wait_ms`, `limiter_wait_ms`,
+`network_ms` and `parse_ms` show where a request spent time. Provider metrics
+appear when the corresponding phase ran. `normalized_cache_hits` counts reuse
+of a validated article without a provider request. The bridge uses the FastMCP logging
+configuration and writes these events to stderr by default.
+
+Bridge operation events omit queries, identifiers, records, headers, URLs and keys.
+The bridge configures no telemetry exporter. Use the default framework and HTTP client
+log levels in production since their verbose logs can include request data. See the [tool error contract](contracts.md#tool-errors)
+for error codes and cooldown information.
 
 ## Troubleshooting
 

@@ -8,7 +8,8 @@ import json
 import math
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -16,9 +17,22 @@ from typing import Any
 
 import httpx
 
+from .diagnostics import measure
+
 JsonObject = dict[str, Any]
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class CacheExpiry:
+    """A source entry's original deadline in its own monotonic clock."""
+
+    expires_at: float
+    clock: Clock
+
+    def expired(self) -> bool:
+        return self.clock() >= self.expires_at
 
 
 @dataclass(frozen=True)
@@ -66,6 +80,10 @@ class ResponseCache:
         while len(self._entries) > self._max_entries or self._bytes > self._max_bytes:
             self._remove(next(iter(self._entries)))
 
+    def expiry(self, key: str) -> CacheExpiry | None:
+        entry = self._entries.get(key)
+        return CacheExpiry(entry.expires_at, self._clock) if entry is not None else None
+
     def _remove(self, key: str) -> None:
         if entry := self._entries.pop(key, None):
             self._bytes -= entry.size
@@ -77,6 +95,10 @@ class ResponseCache:
 
 class CooldownActive(Exception):
     """The provider has asked this credential boundary to stop sending requests."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__(retry_after_seconds)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class RequestPolicy:
@@ -98,14 +120,25 @@ class RequestPolicy:
         """Called with lock held, immediately before sending a request."""
         now = self._clock()
         if now < self._blocked_until:
-            raise CooldownActive
+            raise CooldownActive(math.ceil(self._blocked_until - now))
         delay = self._next_request_at - now
         if delay > 0:
             await self._sleep(delay)
         self._next_request_at = self._clock() + self._interval
 
-    def block(self, value: str | None) -> None:
-        self._blocked_until = max(self._blocked_until, self._clock() + retry_after(value))
+    @asynccontextmanager
+    async def acquire(self, source: str) -> AsyncGenerator[None]:
+        with measure(source, "queue_wait_ms"):
+            await self.lock.acquire()
+        try:
+            yield
+        finally:
+            self.lock.release()
+
+    def block(self, value: str | None) -> int:
+        now = self._clock()
+        self._blocked_until = max(self._blocked_until, now + retry_after(value))
+        return math.ceil(max(0, self._blocked_until - now))
 
 
 def retry_after(value: str | None, *, now: datetime | None = None) -> float:

@@ -168,8 +168,9 @@ async def test_timeout_is_sanitized(make_client):
         raise httpx.ReadTimeout("PRIVATE REQUEST DETAILS", request=request)
 
     client, calls = make_client(handler)
-    with pytest.raises(WosError, match="could not be reached") as exc:
+    with pytest.raises(WosError, match="timed out") as exc:
         await client.search("TS=canine")
+    assert exc.value.code == "timeout"
     assert "PRIVATE" not in str(exc.value)
     assert len(calls) == 1
 
