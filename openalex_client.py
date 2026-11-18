@@ -21,11 +21,17 @@ class OpenAlexClient(ApiClient):
             f"https://doi.org/{key}" if kind == "doi" else f"pmid:{key}", safe=""
         )
         try:
-            data, retrieval = await self._json(path)
+            data, retrieval = await self._json(
+                path, parse=lambda data: self._parse_article(data, kind, key)
+            )
         except LiteratureError as exc:
             if exc.status == 404:
                 return {"article": None, "retrieval": None}
             raise
+        return {"article": data, "retrieval": retrieval}
+
+    @staticmethod
+    def _parse_article(data: JsonObject, kind: str, key: str) -> JsonObject:
         ids = data.get("ids") or {}
         if not isinstance(ids, dict) or not isinstance(data.get("title"), str):
             raise LiteratureError("OpenAlex returned malformed article metadata.")
@@ -76,26 +82,23 @@ class OpenAlexClient(ApiClient):
             else "unknown"
         )
         return {
-            "article": {
-                "id": f"DOI:{doi}" if doi else f"PMID:{pmid}",
-                "title": data["title"],
-                "doi": doi,
-                "pmid": pmid,
-                "pmcid": None,
-                "url": oa_locations[0]["url"] if oa_locations else safe_url(data.get("doi")),
-                "license": oa_locations[0]["license"] if oa_locations else None,
-                "year": data.get("publication_year"),
-                "authors": None,
-                "source": ["OpenAlex"],
-                "abstract": None,
-                "access": {
-                    "status": status,
-                    "full_text_xml_available": False,
-                    "content_status": "metadata_only",
-                },
-                "oa_locations": oa_locations,
-                "sections": [],
-                "warnings": [],
+            "id": f"DOI:{doi}" if doi else f"PMID:{pmid}",
+            "title": data["title"],
+            "doi": doi,
+            "pmid": pmid,
+            "pmcid": None,
+            "url": oa_locations[0]["url"] if oa_locations else safe_url(data.get("doi")),
+            "license": oa_locations[0]["license"] if oa_locations else None,
+            "year": data.get("publication_year"),
+            "authors": None,
+            "source": ["OpenAlex"],
+            "abstract": None,
+            "access": {
+                "status": status,
+                "full_text_xml_available": False,
+                "content_status": "metadata_only",
             },
-            "retrieval": retrieval,
+            "oa_locations": oa_locations,
+            "sections": [],
+            "warnings": [],
         }

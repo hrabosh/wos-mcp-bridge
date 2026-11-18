@@ -3,21 +3,34 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import re
 import time
-from collections import OrderedDict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
 
+from http_support import (
+    Clock,
+    CooldownActive,
+    RequestPolicy,
+    ResponseCache,
+    ResponseTooLarge,
+    Sleep,
+    read_bounded,
+    validate_request_limits,
+)
+
 BASE_URL = "https://api.clarivate.com/apis/wos-starter/v1/"
 UID_PATTERN = re.compile(r"WOS:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SORT_FIELDS = {"RS+D", "RS+A", "PY+D", "PY+A", "LD+D", "LD+A", "TC+D", "TC+A"}
 MAX_CACHE_ENTRIES = 128
+MAX_CACHE_BYTES = 16 * 1024 * 1024
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 LIMITATIONS = (
     "Bibliographic metadata only: no abstracts, full texts, or Journal Impact Factors. "
     "Missing citation counts are unknown, not zero."
@@ -49,11 +62,21 @@ class WosClient:
         transport: httpx.AsyncBaseTransport | None = None,
         min_interval: float = 1.1,
         cache_ttl: float = 900.0,
+        max_response_bytes: int = MAX_RESPONSE_BYTES,
+        cache_max_bytes: int = MAX_CACHE_BYTES,
+        cache_max_entries: int = MAX_CACHE_ENTRIES,
+        operation_timeout: float = 30,
+        clock: Clock | None = None,
+        sleep: Sleep | None = None,
     ) -> None:
         if not api_key.strip():
             raise WosError("Set WOS_API_KEY in the server environment, not in chat or source code.")
-        if min_interval < 0 or cache_ttl < 0:
-            raise ValueError("Request interval and cache TTL cannot be negative.")
+        validate_request_limits(operation_timeout, max_response_bytes)
+        self._cache = ResponseCache(cache_ttl, cache_max_entries, cache_max_bytes, clock=clock)
+        self._policy = RequestPolicy(min_interval, clock=clock, sleep=sleep)
+        self._clock = clock or time.monotonic
+        self._operation_timeout = operation_timeout
+        self._max_response_bytes = max_response_bytes
         self._http = httpx.AsyncClient(
             base_url=BASE_URL,
             headers={"X-ApiKey": api_key.strip(), "Accept": "application/json"},
@@ -62,11 +85,7 @@ class WosClient:
             trust_env=False,
             transport=transport,
         )
-        self._interval = min_interval
         self._ttl = cache_ttl
-        self._next_request_at = 0.0
-        self._lock = asyncio.Lock()
-        self._cache: OrderedDict[str, tuple[float, JsonObject]] = OrderedDict()
 
     async def aclose(self) -> None:
         """Release pooled connections and cached records."""
@@ -90,7 +109,9 @@ class WosClient:
             raise WosError("Unsupported sort. Use RS+D for relevance or PY+D for newest first.")
 
         key = json.dumps(["search", query, limit, page, sort])
-        async with self._lock:
+        if cached := self._cached(key):
+            return cached
+        async with self._operation():
             if cached := self._cached(key):
                 return cached
             data, retrieval = await self._request(
@@ -114,7 +135,7 @@ class WosClient:
             }
             # All entries from this response share an expiry. Cache hits never
             # extend it, so repeated searches cannot keep stale records alive.
-            expires_at = time.monotonic() + self._ttl
+            expires_at = self._clock() + self._ttl
             for record in records:
                 self._remember(record["id"], {"record": record, "retrieval": retrieval}, expires_at)
             self._remember(key, result, expires_at)
@@ -124,7 +145,9 @@ class WosClient:
         """Retrieve a WoS bibliographic record, not the corresponding article PDF."""
         if not isinstance(uid, str) or not UID_PATTERN.fullmatch(uid):
             raise WosError("Use a WOS: accession ID returned by search, not a URL or DOI.")
-        async with self._lock:
+        if envelope := self._cached(uid):
+            return self._fetch_result(envelope)
+        async with self._operation():
             envelope = self._cached(uid)
             if envelope is None:
                 data, retrieval = await self._request("documents/" + quote(uid, safe=""))
@@ -132,33 +155,43 @@ class WosClient:
                 if record["id"] != uid:
                     raise WosError("Clarivate returned a different record ID than requested.")
                 envelope = {"record": record, "retrieval": retrieval}
-                self._remember(uid, envelope, time.monotonic() + self._ttl)
-            record = envelope["record"]
-            return {
-                "id": record["id"],
-                "title": record["title"],
-                "url": record["url"],
-                "text": (
-                    "Web of Science Starter bibliographic metadata, NOT article full text "
-                    "or abstract.\n" + json.dumps(record, ensure_ascii=False)
-                ),
-                "metadata": {
-                    **record,
-                    "retrieval": envelope["retrieval"],
-                    "limitations": LIMITATIONS,
-                },
-            }
+                self._remember(uid, envelope, self._clock() + self._ttl)
+            return self._fetch_result(envelope)
+
+    @staticmethod
+    def _fetch_result(envelope: JsonObject) -> JsonObject:
+        record = envelope["record"]
+        return {
+            "id": record["id"],
+            "title": record["title"],
+            "url": record["url"],
+            "text": (
+                "Web of Science Starter bibliographic metadata, NOT article full text "
+                "or abstract.\n" + json.dumps(record, ensure_ascii=False)
+            ),
+            "metadata": {
+                **record,
+                "retrieval": envelope["retrieval"],
+                "limitations": LIMITATIONS,
+            },
+        }
 
     async def _request(
         self, path: str, params: JsonObject | None = None
     ) -> tuple[JsonObject, JsonObject]:
         """Called under the lock; issue one request without following redirects."""
-        delay = self._next_request_at - time.monotonic()
-        if delay > 0:
-            await asyncio.sleep(delay)
-        self._next_request_at = time.monotonic() + self._interval
+        await self._policy.wait()
         try:
-            response = await self._http.get(path, params=params)
+            async with self._http.stream("GET", path, params=params) as response:
+                if response.status_code == 429:
+                    self._policy.block(response.headers.get("retry-after"))
+                raw = (
+                    await read_bounded(response, self._max_response_bytes)
+                    if response.status_code == 200
+                    else b""
+                )
+        except ResponseTooLarge:
+            raise WosError("Clarivate response exceeds the size limit.") from None
         except httpx.RequestError:
             raise WosError(
                 "Clarivate could not be reached. Check connectivity or retry later."
@@ -180,7 +213,7 @@ class WosClient:
                 + " No automatic retry was made."
             )
         try:
-            data = response.json()
+            data = json.loads(raw)
         except ValueError:
             raise WosError("Clarivate returned an invalid JSON response.") from None
         if not isinstance(data, dict):
@@ -193,24 +226,24 @@ class WosClient:
             },
         }
 
+    @asynccontextmanager
+    async def _operation(self) -> AsyncIterator[None]:
+        try:
+            async with asyncio.timeout(self._operation_timeout), self._policy.lock:
+                yield
+        except TimeoutError:
+            raise WosError("Clarivate operation timed out; retry later.") from None
+        except CooldownActive:
+            raise WosError("Clarivate rate limit cooldown active; retry later.") from None
+
     def _cached(self, key: str) -> JsonObject | None:
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        expires_at, value = entry
-        if time.monotonic() >= expires_at:
-            del self._cache[key]
-            return None
-        self._cache.move_to_end(key)
-        result = copy.deepcopy(value)
-        result["retrieval"]["cached"] = True
+        result = self._cache.get(key)
+        if result is not None:
+            result["retrieval"]["cached"] = True
         return result
 
     def _remember(self, key: str, value: JsonObject, expires_at: float) -> None:
-        self._cache[key] = (expires_at, copy.deepcopy(value))
-        self._cache.move_to_end(key)
-        while len(self._cache) > MAX_CACHE_ENTRIES:
-            self._cache.popitem(last=False)
+        self._cache.put(key, value, expires_at=expires_at)
 
 
 def _object(value: Any) -> JsonObject:

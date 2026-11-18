@@ -125,7 +125,12 @@ class EuropePmcClient(ApiClient):
                 "pageSize": limit,
                 "cursorMark": cursor,
             },
+            parse=lambda data: self._parse_search(data, limit),
         )
+        return {"query": query, "cursor": cursor, **data, "retrieval": retrieval}
+
+    @staticmethod
+    def _parse_search(data: JsonObject, limit: int) -> JsonObject:
         results = data.get("resultList")
         if (
             not isinstance(results, dict)
@@ -136,12 +141,9 @@ class EuropePmcClient(ApiClient):
             raise LiteratureError("Europe PMC returned malformed search results.")
         next_cursor = data.get("nextCursorMark")
         return {
-            "query": query,
             "total": data["hitCount"],
-            "cursor": cursor,
             "next_cursor": next_cursor if isinstance(next_cursor, str) else None,
             "results": [normalise(hit) for hit in results["result"][:limit]],
-            "retrieval": retrieval,
         }
 
     async def resolve(self, value: str) -> JsonObject:
@@ -170,5 +172,7 @@ class EuropePmcClient(ApiClient):
         kind, key = identifier(pmcid)
         if kind != "pmcid":
             raise LiteratureError("Full text XML requires a PMCID.")
-        raw, retrieval = await self._get(f"{key}/fullTextXML")
-        return {**extract_jats(raw, expected_pmcid=key), "retrieval": retrieval}
+        data, retrieval = await self._get(
+            f"{key}/fullTextXML", parse=lambda raw: extract_jats(raw, expected_pmcid=key)
+        )
+        return {**data, "retrieval": retrieval}
