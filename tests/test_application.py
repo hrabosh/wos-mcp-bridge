@@ -10,6 +10,7 @@ from fastmcp import Client
 
 from wos_mcp_bridge import server
 from wos_mcp_bridge.literature_client import LiteratureClient
+from wos_mcp_bridge.wos_client import WosError
 
 
 async def test_factory_servers_use_independent_borrowed_services(make_client):
@@ -130,3 +131,41 @@ async def test_default_factory_reads_environment_at_startup(monkeypatch):
     async with Client(application_server) as client:
         assert len(await client.list_tools()) == 7
     assert received == ["set-after-factory-creation"]
+
+
+async def test_literature_profile_starts_without_wos_and_lists_only_its_tools(monkeypatch):
+    monkeypatch.delenv("WOS_API_KEY", raising=False)
+    monkeypatch.setenv("WOS_MCP_PROFILE", "literature")
+    application_server = server.create_server()
+    async with Client(application_server) as client:
+        assert {tool.name for tool in await client.list_tools()} == {
+            "search_literature",
+            "resolve_article",
+            "get_article",
+            "get_article_section",
+        }
+
+
+async def test_full_profile_requires_wos_key():
+    with pytest.raises(WosError, match="Set WOS_API_KEY"):
+        async with server.open_services(server.Settings()):
+            pytest.fail("The full profile requires a WoS key")
+
+
+def test_settings_load_and_validate_operating_limits():
+    settings = server.Settings.from_env(
+        {
+            "WOS_MCP_MIN_INTERVAL_SECONDS": "2",
+            "WOS_MCP_CACHE_TTL_SECONDS": "0",
+            "WOS_MCP_OPERATION_TIMEOUT_SECONDS": "45",
+        }
+    )
+    assert (settings.min_interval, settings.cache_ttl, settings.operation_timeout) == (2, 0, 45)
+    for name, value in (
+        ("WOS_MCP_PROFILE", "invalid"),
+        ("WOS_MCP_MIN_INTERVAL_SECONDS", "-1"),
+        ("WOS_MCP_CACHE_TTL_SECONDS", "nan"),
+        ("WOS_MCP_OPERATION_TIMEOUT_SECONDS", "0"),
+    ):
+        with pytest.raises(ValueError, match=name):
+            server.Settings.from_env({name: value})

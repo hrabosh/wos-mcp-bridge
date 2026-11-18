@@ -62,8 +62,9 @@ uv run --locked --no-dev wos-mcp-bridge
 The process waits for an MCP client on stdin and stdout. You can verify the
 installation without credentials using `wos-mcp-bridge --version`.
 
-For managed hosting, see [configuration and deployment](docs/usage.md#deploy-from-this-repository).
-A host provides the HTTPS endpoint and authentication for remote clients.
+Set `WOS_MCP_PROFILE=literature` to use the four Europe PMC and OpenAlex tools
+without a Clarivate key. See the [deployment guide](docs/usage.md#deployment) for
+authenticated Streamable HTTP and managed hosting.
 
 ## Tools
 

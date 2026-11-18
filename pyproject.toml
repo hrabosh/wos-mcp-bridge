@@ -25,6 +25,8 @@ dependencies = [
     "httpx>=0.28.1,<0.29",
     "pydantic>=2.13.4,<3",
     "defusedxml>=0.7.1,<0.8",
+    "starlette>=1.10,<2",
+    "uvicorn>=0.54,<1",
 ]
 
 [project.urls]

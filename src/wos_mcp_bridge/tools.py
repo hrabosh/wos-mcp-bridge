@@ -24,7 +24,7 @@ from .models import (
     SortOrder,
     WosSearchResponse,
 )
-from .wos_client import JsonObject, WosError
+from .wos_client import JsonObject, WosClient, WosError
 
 ANNOTATIONS = {
     "readOnlyHint": True,
@@ -136,7 +136,14 @@ def _services(ctx: Context) -> Services:
     return cast(Services, ctx.lifespan_context["services"])
 
 
-def register_tools(mcp: FastMCP) -> None:
+def _wos_service(ctx: Context) -> WosClient:
+    client = _services(ctx).wos
+    if client is None:
+        raise ToolError("Web of Science requires the full provider profile.")
+    return client
+
+
+def register_wos_tools(mcp: FastMCP) -> None:
     @mcp.tool(
         annotations=ANNOTATIONS,
         output_schema=SearchResponse.model_json_schema(mode="serialization"),
@@ -147,7 +154,7 @@ def register_tools(mcp: FastMCP) -> None:
         Example: TS=(canine AND lung). Each result has id, title and url.
         Use fetch for bibliographic metadata, not the article full text.
         """
-        client = _services(ctx).wos
+        client = _wos_service(ctx)
         try:
             found = await client.search(query)
         except WosError as exc:
@@ -166,7 +173,7 @@ def register_tools(mcp: FastMCP) -> None:
     )
     async def fetch(id: WosId, ctx: Context) -> ToolResult:
         """Retrieve bibliographic metadata for a WOS: ID, NOT a full article or abstract."""
-        client = _services(ctx).wos
+        client = _wos_service(ctx)
         try:
             return _result(await client.fetch(id), FetchResponse)
         except WosError as exc:
@@ -206,7 +213,7 @@ def register_tools(mcp: FastMCP) -> None:
         (citation sorting depends on entitlement). Returns the exact query, total,
         DOIs, authors, available citation counts, and retrieval/quota information.
         """
-        client = _services(ctx).wos
+        client = _wos_service(ctx)
         try:
             return _result(
                 await client.search(query, limit=limit, page=page, sort=sort), WosSearchResponse
@@ -214,6 +221,8 @@ def register_tools(mcp: FastMCP) -> None:
         except WosError as exc:
             raise ToolError(str(exc)) from None
 
+
+def register_literature_tools(mcp: FastMCP) -> None:
     @mcp.tool(
         annotations=ANNOTATIONS,
         output_schema=LiteratureSearchResponse.model_json_schema(mode="serialization"),

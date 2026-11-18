@@ -1986,6 +1986,8 @@ dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -2005,6 +2007,8 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=4.1.7,<5" },
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "pydantic", specifier = ">=2.13.4,<3" },
+    { name = "starlette", specifier = ">=1.10,<2" },
+    { name = "uvicorn", specifier = ">=0.54,<1" },
 ]
 
 [package.metadata.requires-dev]
