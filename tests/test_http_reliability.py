@@ -257,3 +257,110 @@ async def test_cooldown_expires_without_holding_the_request_queue(provider):
     clock[0] = 160
     assert (await client.search("second"))["results"]
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+async def test_nonfinite_json_is_rejected_before_caching(provider, token):
+    import json
+
+    def handler(_):
+        if len(calls) == 1:
+            body = {**healthy(), "unused_number": "INVALID_NUMBER"}
+            raw = json.dumps(body).replace('"INVALID_NUMBER"', token).encode()
+            return httpx.Response(200, content=raw)
+        return httpx.Response(200, json=healthy())
+
+    client, calls, healthy = provider(handler)
+    with pytest.raises(ERRORS, match="JSON"):
+        await client.search("same-query")
+    assert (await client.search("same-query"))["results"]
+    assert len(calls) == 2
+
+
+async def test_oversized_stream_is_rejected_before_waiting_for_its_tail(provider):
+    class StalledTail(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b"123456"
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = StalledTail()
+    client, calls, _ = provider(
+        lambda _: httpx.Response(200, stream=stream),
+        max_response_bytes=5,
+        operation_timeout=0.05,
+    )
+    with pytest.raises(ERRORS, match="size limit"):
+        await client.search("over-budget")
+    assert stream.closed
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("value", ["-1", "+0", "0.1", " 5", "١", "nan", "inf"])
+def test_malformed_delay_seconds_use_the_conservative_fallback(value):
+    from wos_mcp_bridge.http_support import retry_after
+
+    assert retry_after(value) == 60
+
+
+@pytest.mark.parametrize("title", [" ", "<p> </p>"])
+async def test_europe_pmc_empty_normalized_title_is_not_cached(title):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        body = search_body()
+        if len(calls) == 1:
+            body["resultList"]["result"][0]["title"] = title
+        return httpx.Response(200, json=body)
+
+    client = EuropePmcClient(transport=httpx.MockTransport(handler), min_interval=0)
+    try:
+        with pytest.raises(LiteratureError, match="title"):
+            await client.search("same-query")
+        assert (await client.search("same-query"))["results"][0]["title"]
+        assert len(calls) == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("title", [" ", "<p> </p>"])
+async def test_openalex_empty_normalized_title_is_not_cached(title):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        body = {**WORK, "title": title} if len(calls) == 1 else WORK
+        return httpx.Response(200, json=body)
+
+    client = OpenAlexClient(transport=httpx.MockTransport(handler), min_interval=0)
+    try:
+        with pytest.raises(LiteratureError, match="title"):
+            await client.resolve(DOI)
+        assert (await client.resolve(DOI))["article"]["title"] == "Synthetic veterinary article"
+        assert len(calls) == 2
+    finally:
+        await client.aclose()
+
+
+async def test_invalid_unicode_does_not_publish_partial_wos_records(make_client):
+    def handler(request):
+        if len(calls) == 1:
+            bad_hit = {**WOS_HIT, "uid": "WOS:TEST002", "title": "\ud800"}
+            import json
+
+            return httpx.Response(
+                200,
+                content=json.dumps({"metadata": {"total": 2}, "hits": [WOS_HIT, bad_hit]}).encode(),
+            )
+        return httpx.Response(200, json=WOS_HIT)
+
+    client, calls = make_client(handler)
+    with pytest.raises(WosError, match="JSON"):
+        await client.search("invalid-unicode")
+    assert (await client.fetch("WOS:TEST001"))["metadata"]["retrieval"]["cached"] is False
+    assert len(calls) == 2

@@ -18,6 +18,7 @@ from .http_support import (
     ResponseCache,
     ResponseTooLarge,
     Sleep,
+    decode_json,
     read_bounded,
     validate_request_limits,
 )
@@ -161,7 +162,7 @@ class ApiClient:
     ) -> tuple[JsonObject, JsonObject]:
         def decode(raw: bytes) -> JsonObject:
             try:
-                data = json.loads(raw)
+                data = decode_json(raw)
             except (ValueError, UnicodeDecodeError):
                 raise LiteratureError(f"{self.source} returned invalid JSON.") from None
             if not isinstance(data, dict):

@@ -52,6 +52,9 @@ def _optional_id(value: object, kind: str) -> str | None:
 def normalise(hit: object) -> JsonObject:
     if not isinstance(hit, dict) or not isinstance(hit.get("title"), str):
         raise LiteratureError("Europe PMC returned malformed article metadata.")
+    title = plain_text(hit["title"])
+    if not title:
+        raise LiteratureError("Europe PMC returned an article without a valid title.")
     doi = _optional_id(hit.get("doi"), "doi")
     pmcid = _optional_id(hit.get("pmcid"), "pmcid")
     pmid = _optional_id(hit.get("id"), "pmid") if hit.get("source") == "MED" else None
@@ -87,7 +90,7 @@ def normalise(hit: object) -> JsonObject:
     license_value = hit.get("license") if isinstance(hit.get("license"), str) else None
     return {
         "id": record_key,
-        "title": plain_text(hit["title"]),
+        "title": title,
         "doi": doi,
         "pmid": pmid,
         "pmcid": pmcid,

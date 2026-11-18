@@ -43,20 +43,25 @@
 
 **Interfaces:** Immutable `Settings` loads environment explicitly; `Services(wos, literature)` contains concrete services; `create_server(settings=None, *, services=None)` creates independent FastMCP servers. Factory-owned resources are registered immediately with `AsyncExitStack`. Supplied services are borrowed and never closed by the server. Environment defaults are resolved at startup, not import.
 
-- [ ] Write failing tests for independent server instances, borrowed ownership, startup failure cleanup and environment loading without leaked secrets.
-- [ ] Implement package layout and factory without wrapping pure helpers in classes or duplicating the literature service.
-- [ ] Keep root `server.py` a thin compatibility wrapper. Add minimal local build metadata so the src package can be installed; full release engineering remains #7.
-- [ ] Run the complete offline suite, Ruff, and install/import smoke checks outside the checkout.
-- [ ] Add a short ADR and architecture diagram describing the implementation. Commit the structural change separately.
+- [x] Write failing tests for independent server instances, borrowed ownership, startup failure cleanup and environment loading without leaked secrets.
+- [x] Implement package layout and factory without wrapping pure helpers in classes or duplicating the literature service.
+- [x] Keep root `server.py` a thin compatibility wrapper. Add minimal local build metadata so the src package can be installed; full release engineering remains #7.
+- [x] Run the complete offline suite, Ruff, and install/import smoke checks outside the checkout.
+- [x] Add a short ADR and architecture diagram describing the implementation. Commit the structural change separately.
 
 ## Task 3: Review and handoff
 
-- [ ] Review the combined diff against #5 and #3, including each item in Review focus.
-- [ ] Fix material findings with failing regression tests, rerun the full checks and report any remaining scope explicitly.
-- [ ] Keep the branch available for review. Do not merge, publish, change repository visibility or activate billing.
+- [x] Review the combined diff against #5 and #3, including each item in Review focus.
+- [x] Fix material findings with failing regression tests, rerun the full checks and report any remaining scope explicitly.
+- [x] Keep the branch available for review. Do not merge, publish, change repository visibility or activate billing.
 
 ## Execution record
 
 - Baseline: 134 tests passed, 1 live test skipped on 2026-11-18.
 - Workspace: managed worktree on `refactor/reliability-and-composition`.
 - Authorization: user asked to start the refactoring after reviewing the roadmap; proceed inline without another design-selection round.
+
+- Final verification: 196 offline tests passed, 1 opt-in live test skipped; Ruff checks and formatting passed.
+- An independent review found non-finite/invalid-Unicode JSON, malformed Retry-After, empty normalized titles and delayed streaming-overflow detection. Twenty-two regressions failed before the fixes; all review regressions and the complete suite passed afterward.
+- The final wheel was built, installed outside the checkout and imported without credentials or constructing HTTP clients. Module, console and legacy entrypoints passed real stdio discovery of all seven tools, readable validation errors and subprocess cleanup. The smoke client explicitly used handshake mode; broader auto-negotiation/HTTP interoperability remains part of issue #10.
+- The implementation remains on the named feature branch for review; no merge, public package release, repository-visibility change or billing activation was performed.

@@ -21,6 +21,7 @@ from .http_support import (
     ResponseCache,
     ResponseTooLarge,
     Sleep,
+    decode_json,
     read_bounded,
     validate_request_limits,
 )
@@ -213,7 +214,7 @@ class WosClient:
                 + " No automatic retry was made."
             )
         try:
-            data = json.loads(raw)
+            data = decode_json(raw)
         except ValueError:
             raise WosError("Clarivate returned an invalid JSON response.") from None
         if not isinstance(data, dict):

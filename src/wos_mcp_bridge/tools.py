@@ -25,7 +25,9 @@ SortOrder = Literal["RS+D", "RS+A", "PY+D", "PY+A", "LD+D", "LD+A", "TC+D", "TC+
 
 def _result(data: JsonObject) -> ToolResult:
     # Both representations are needed by different MCP/ChatGPT clients.
-    return ToolResult(content=json.dumps(data, ensure_ascii=False), structured_content=data)
+    return ToolResult(
+        content=json.dumps(data, ensure_ascii=False, allow_nan=False), structured_content=data
+    )
 
 
 def _services(ctx: Context) -> Services:

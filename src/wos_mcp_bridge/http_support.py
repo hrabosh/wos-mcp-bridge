@@ -55,7 +55,9 @@ class ResponseCache:
 
     def put(self, key: str, value: JsonObject, *, expires_at: float | None = None) -> None:
         self._remove(key)
-        size = len(key.encode()) + len(json.dumps(value, ensure_ascii=False).encode())
+        size = len(key.encode()) + len(
+            json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
+        )
         if size > self._max_bytes or self._max_entries == 0 or self._ttl == 0:
             return
         expiry = expires_at if expires_at is not None else self._clock() + self._ttl
@@ -108,17 +110,16 @@ class RequestPolicy:
 
 def retry_after(value: str | None, *, now: datetime | None = None) -> float:
     """Retry-After seconds/date, with a conservative default and one-hour cap."""
+    if value is not None and value.isascii() and value.isdigit():
+        digits = value.lstrip("0") or "0"
+        return 3600 if len(digits) > 4 else min(int(digits), 3600)
     try:
-        seconds = float(value)
-        return max(0, min(seconds, 3600)) if math.isfinite(seconds) else 60
-    except (ValueError, TypeError):
-        try:
-            target = parsedate_to_datetime(value)
-            if target.tzinfo is None:
-                target = target.replace(tzinfo=UTC)
-            return max(0, min((target - (now or datetime.now(UTC))).total_seconds(), 3600))
-        except (ValueError, TypeError, OverflowError):
-            return 60
+        target = parsedate_to_datetime(value)
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=UTC)
+        return max(0, min((target - (now or datetime.now(UTC))).total_seconds(), 3600))
+    except (ValueError, TypeError, OverflowError):
+        return 60
 
 
 class ResponseTooLarge(Exception):
@@ -127,7 +128,7 @@ class ResponseTooLarge(Exception):
 
 async def read_bounded(response: httpx.Response, maximum: int) -> bytes:
     body = bytearray()
-    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+    async for chunk in response.aiter_bytes():
         if len(body) + len(chunk) > maximum:
             raise ResponseTooLarge
         body.extend(chunk)
@@ -137,3 +138,13 @@ async def read_bounded(response: httpx.Response, maximum: int) -> bytes:
 def validate_request_limits(operation_timeout: float, max_response_bytes: int) -> None:
     if not math.isfinite(operation_timeout) or operation_timeout <= 0 or max_response_bytes <= 0:
         raise ValueError("Operation timeout and response limit must be finite and positive.")
+
+
+def decode_json(raw: bytes) -> object:
+    """Reject non-finite numbers and invalid Unicode before publishing any records."""
+    try:
+        value = json.loads(raw)
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (UnicodeError, RecursionError):
+        raise ValueError("Upstream JSON cannot be represented safely.") from None
+    return value

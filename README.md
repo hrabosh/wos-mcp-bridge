@@ -226,7 +226,7 @@ A **15-minute, 128-entry in-memory cache** (at most 16 MiB of serialized keys an
 values) reduces repeated searches and lets fetches reuse recently returned search records. Reading a cached entry does not extend its
 expiry. Returned cache values are copied so callers cannot mutate stored results.
 
-**Run one process/replica per API key.** The limiter and cache are per process, not
+**Run one application instance and one process/replica per API key.** The limiter and cache are per process, not
 account-wide. Other programs or replicas can still exhaust the subscription's quota;
 Clarivate is the authority for daily limits. Cache hits return quota headers observed
 at the original fetch time, **not the current remaining quota**. The bridge does not

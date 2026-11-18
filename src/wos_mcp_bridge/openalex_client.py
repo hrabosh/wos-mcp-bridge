@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Unpack
 from urllib.parse import quote
 
+from .article_xml import plain_text
 from .europe_pmc import _optional_id, identifier, safe_url
 from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
 
@@ -41,6 +42,9 @@ class OpenAlexClient:
         ids = data.get("ids") or {}
         if not isinstance(ids, dict) or not isinstance(data.get("title"), str):
             raise LiteratureError("OpenAlex returned malformed article metadata.")
+        title = plain_text(data["title"])
+        if not title:
+            raise LiteratureError("OpenAlex returned an article without a valid title.")
         doi = _optional_id(data.get("doi") or ids.get("doi"), "doi")
         pmid_url = ids.get("pmid")
         pmid = (
@@ -89,7 +93,7 @@ class OpenAlexClient:
         )
         return {
             "id": f"DOI:{doi}" if doi else f"PMID:{pmid}",
-            "title": data["title"],
+            "title": title,
             "doi": doi,
             "pmid": pmid,
             "pmcid": None,
