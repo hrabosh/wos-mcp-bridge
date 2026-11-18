@@ -25,6 +25,10 @@ Records can help find papers; they cannot establish a study's methods or conclus
 | `get_article(identifier, max_chars=10000, include_text=True)` | Available Europe PMC OA XML as bounded article sections; otherwise metadata/abstract. |
 | `get_article_section(identifier, section_id, offset=0, max_chars=10000)` | One section or a character slice, with `next_offset` for continuation. |
 
+All tools publish explicit input and output schemas. Detailed records include a common
+`bibliography` object while preserving legacy author/year fields. See the
+[data contracts](docs/contracts.md) for types, null semantics and compatibility.
+
 The original `search` and `search_wos` tools use **WoS advanced syntax**:
 
 ```text
@@ -198,6 +202,7 @@ or extra web framework:
 server.py                         Compatibility entrypoint for existing hosting
 src/wos_mcp_bridge/server.py       MCP factory and server instructions
 src/wos_mcp_bridge/tools.py        Seven thin MCP adapters and serialization
+src/wos_mcp_bridge/models.py       Strict provider and MCP response contracts
 src/wos_mcp_bridge/config.py       Explicit immutable settings, secret-safe repr
 src/wos_mcp_bridge/application.py  Service composition and resource ownership
 src/wos_mcp_bridge/wos_client.py   WoS validation, normalization and API operations

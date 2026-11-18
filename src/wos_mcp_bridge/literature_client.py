@@ -7,6 +7,7 @@ import copy
 from .article_xml import validate_text
 from .europe_pmc import EuropePmcClient, identifier, safe_url
 from .literature_http import JsonObject, LiteratureError
+from .models import Bibliography
 from .openalex_client import OpenAlexClient
 
 MAX_TEXT_CHARS = 20_000
@@ -83,6 +84,9 @@ def deduplicate(records: list[JsonObject]) -> list[JsonObject]:
                     primary[key] = copy.deepcopy(value)
             if extra["access"]["status"] == "open_access":
                 primary["access"]["status"] = "open_access"
+            for field in ("authors", "year", "journal"):
+                if primary["bibliography"][field] is None:
+                    primary["bibliography"][field] = copy.deepcopy(extra["bibliography"][field])
             for location in extra["oa_locations"]:
                 if location not in primary["oa_locations"]:
                     primary["oa_locations"].append(copy.deepcopy(location))
@@ -161,6 +165,9 @@ class LiteratureClient:
                     else:
                         article["source"].append("OpenAlex")
                         article["oa_locations"].extend(supplement["oa_locations"])
+                        for field in ("authors", "year", "journal"):
+                            if article["bibliography"][field] is None:
+                                article["bibliography"][field] = supplement["bibliography"][field]
                         for field in ("doi", "pmid", "license", "url"):
                             if article.get(field) is None:
                                 article[field] = supplement[field]
@@ -191,6 +198,7 @@ class LiteratureClient:
                 "oa_locations": [],
                 "sections": [],
                 "warnings": [],
+                "bibliography": Bibliography(authors=None, year=None, journal=None).model_dump(),
                 "retrieval": retrieval,
             }
         article["warnings"].extend(warnings)
@@ -255,6 +263,7 @@ class LiteratureClient:
             "license": article["license"],
             "source": article["source"],
             "access": article["access"],
+            "bibliography": article["bibliography"],
             "section": {
                 **section,
                 "text": text,

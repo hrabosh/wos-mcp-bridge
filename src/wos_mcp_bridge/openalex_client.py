@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Unpack
 from urllib.parse import quote
 
+from pydantic import ValidationError
+
 from .article_xml import plain_text
 from .europe_pmc import _optional_id, identifier, safe_url
 from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
+from .models import ArticleRecord, Bibliography
 
 
 class OpenAlexClient:
@@ -91,7 +94,7 @@ class OpenAlexClient:
             if access.get("is_oa") is False
             else "unknown"
         )
-        return {
+        article = {
             "id": f"DOI:{doi}" if doi else f"PMID:{pmid}",
             "title": title,
             "doi": doi,
@@ -112,3 +115,48 @@ class OpenAlexClient:
             "sections": [],
             "warnings": [],
         }
+
+        try:
+            primary = data.get("primary_location")
+            if primary is not None and not isinstance(primary, dict):
+                raise LiteratureError("OpenAlex returned malformed source metadata.")
+            source = primary.get("source") if primary is not None else None
+            if source is not None and not isinstance(source, dict):
+                raise LiteratureError("OpenAlex returned malformed source metadata.")
+            journal = (
+                source.get("display_name") if source and source.get("type") == "journal" else None
+            )
+            article["bibliography"] = Bibliography.from_metadata(
+                authors=_author_names(data.get("authorships")),
+                year=article["year"],
+                journal=journal,
+            ).model_dump(mode="json")
+            return ArticleRecord.model_validate(article).model_dump(mode="json", exclude_unset=True)
+        except ValidationError:
+            raise LiteratureError("OpenAlex returned malformed bibliographic metadata.") from None
+
+
+def _author_names(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise LiteratureError("OpenAlex returned malformed author metadata.")
+    names: list[str] = []
+    complete = True
+    for authorship in value:
+        if not isinstance(authorship, dict):
+            raise LiteratureError("OpenAlex returned malformed author metadata.")
+        author = authorship.get("author")
+        if author is None:
+            complete = False
+            continue
+        if not isinstance(author, dict):
+            raise LiteratureError("OpenAlex returned malformed author metadata.")
+        name = author.get("display_name")
+        if name is None:
+            complete = False
+            continue
+        if not isinstance(name, str):
+            raise LiteratureError("OpenAlex returned malformed author metadata.")
+        names.append(name)
+    return names if complete else None

@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
+from pydantic import ValidationError
 
 from .http_support import (
     Clock,
@@ -25,6 +26,7 @@ from .http_support import (
     read_bounded,
     validate_request_limits,
 )
+from .models import Bibliography, WosRecord
 
 BASE_URL = "https://api.clarivate.com/apis/wos-starter/v1/"
 UID_PATTERN = re.compile(r"WOS:[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
@@ -266,8 +268,10 @@ def _normalise(hit: Any) -> JsonObject:
     source = _object(hit.get("source"))
     identifiers = _object(hit.get("identifiers"))
     names = _object(hit.get("names"))
-    citations = hit.get("citations") or []
-    authors = names.get("authors") or []
+    citations = hit.get("citations")
+    citations = [] if citations is None else citations
+    authors = names.get("authors")
+    authors = [] if authors is None else authors
     if not isinstance(citations, list) or not isinstance(authors, list):
         raise WosError("Clarivate returned malformed author or citation metadata.")
     counts = {
@@ -278,7 +282,8 @@ def _normalise(hit: Any) -> JsonObject:
         and type(item.get("count")) is int
         and item["count"] >= 0
     }
-    return {
+    keywords = _object(hit.get("keywords")).get("authorKeywords")
+    record = {
         "id": uid,
         "title": title,
         "url": _record_url(_object(hit.get("links")).get("record"), uid),
@@ -294,10 +299,24 @@ def _normalise(hit: Any) -> JsonObject:
         "pages": source.get("pages"),
         "doi": identifiers.get("doi"),
         "pmid": identifiers.get("pmid"),
-        "types": hit.get("types") or [],
-        "keywords": _object(hit.get("keywords")).get("authorKeywords") or [],
+        "types": hit.get("types") if hit.get("types") is not None else [],
+        "keywords": [] if keywords is None else keywords,
         "citations": counts or None,
     }
+
+    try:
+        record["bibliography"] = Bibliography.from_metadata(
+            authors=(
+                record["authors"]
+                if names.get("authors") is not None and len(record["authors"]) == len(authors)
+                else None
+            ),
+            year=record["year"],
+            journal=record["journal"],
+        ).model_dump(mode="json")
+        return WosRecord.model_validate(record).model_dump(mode="json", exclude_unset=True)
+    except ValidationError:
+        raise WosError("Clarivate returned malformed bibliographic metadata.") from None
 
 
 def _record_url(candidate: Any, uid: str) -> str:

@@ -6,8 +6,11 @@ import re
 from typing import Unpack
 from urllib.parse import urlsplit
 
+from pydantic import ValidationError
+
 from .article_xml import extract_jats, plain_text, validate_text
 from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
+from .models import ArticleRecord, Bibliography
 
 
 def identifier(value: str) -> tuple[str, str]:
@@ -88,7 +91,7 @@ def normalise(hit: object) -> JsonObject:
                 if link_url := safe_url(link.get("url")):
                     locations.append({"url": link_url, "license": None, "source": "Europe PMC"})
     license_value = hit.get("license") if isinstance(hit.get("license"), str) else None
-    return {
+    record = {
         "id": record_key,
         "title": title,
         "doi": doi,
@@ -109,6 +112,44 @@ def normalise(hit: object) -> JsonObject:
         "sections": [],
         "warnings": [],
     }
+
+    try:
+        journal_info = hit.get("journalInfo")
+        if journal_info is not None and not isinstance(journal_info, dict):
+            raise LiteratureError("Europe PMC returned malformed journal metadata.")
+        journal = journal_info.get("journal") if journal_info is not None else None
+        if journal is not None and not isinstance(journal, dict):
+            raise LiteratureError("Europe PMC returned malformed journal metadata.")
+        record["bibliography"] = Bibliography.from_metadata(
+            authors=_author_names(hit.get("authorList")),
+            year=record["year"],
+            journal=journal.get("title") if journal is not None else None,
+        ).model_dump(mode="json")
+        return ArticleRecord.model_validate(record).model_dump(mode="json", exclude_unset=True)
+    except ValidationError:
+        raise LiteratureError("Europe PMC returned malformed bibliographic metadata.") from None
+
+
+def _author_names(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("author"), list):
+        raise LiteratureError("Europe PMC returned malformed author metadata.")
+    names: list[str] = []
+    complete = True
+    for author in value["author"]:
+        if not isinstance(author, dict):
+            raise LiteratureError("Europe PMC returned malformed author metadata.")
+        name = author.get("fullName")
+        if name is None:
+            name = author.get("collectiveName")
+        if name is None:
+            complete = False
+            continue
+        if not isinstance(name, str):
+            raise LiteratureError("Europe PMC returned malformed author metadata.")
+        names.append(name)
+    return names if complete else None
 
 
 class EuropePmcClient:
