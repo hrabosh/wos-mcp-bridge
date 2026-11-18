@@ -24,7 +24,14 @@ def _http_url(value: str) -> str:
         or parsed.username
         or parsed.password
         or parsed.port not in {None, 80, 443}
-        or re.search(r"[\x00-\x20\x7f]", value)
+        or not all(char.isprintable() and char != " " for char in value)
+        or re.search(r'[<>"{}|\\^`]', value)
+        or re.search(r"%(?![0-9A-Fa-f]{2})", value)
+        or any(
+            char in part for part in (parsed.path, parsed.query, parsed.fragment) for char in "[]"
+        )
+        or "#" in parsed.fragment
+        or ("[" in parsed.netloc and "%" in parsed.netloc)
     ):
         raise ValueError("Expected an HTTP(S) link without credentials.")
     return value
@@ -41,7 +48,7 @@ HttpLink = Annotated[str, Field(json_schema_extra={"format": "iri"}), AfterValid
 Timestamp = Annotated[
     str,
     Field(
-        pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$",
+        pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$",
         json_schema_extra={"format": "date-time"},
     ),
     AfterValidator(_timestamp),
@@ -51,6 +58,11 @@ Year = Annotated[int, Field(ge=1, le=9999)]
 LegacyYear = Year | str
 SortOrder = Literal["RS+D", "RS+A", "PY+D", "PY+A", "LD+D", "LD+A", "TC+D", "TC+A"]
 LiteratureSource = Literal["Europe PMC", "OpenAlex"]
+TOKEN_PATTERN = r"^[^\s\x00-\x1f\x7f](?:[^\x00-\x1f\x7f]*[^\s\x00-\x1f\x7f])?$"
+CursorToken = Annotated[
+    str, Field(strict=True, min_length=1, max_length=2048, pattern=TOKEN_PATTERN)
+]
+SectionKey = Annotated[str, Field(strict=True, min_length=1, max_length=512, pattern=TOKEN_PATTERN)]
 
 
 class OutputModel(BaseModel):
@@ -164,7 +176,7 @@ class OALocation(OutputModel):
 
 
 class SectionDirectory(OutputModel):
-    id: Nonblank
+    id: SectionKey
     original_id: str | None
     heading: str | None
     parent_id: str | None
@@ -174,6 +186,12 @@ class SectionDirectory(OutputModel):
 
 class RawSection(SectionDirectory):
     text: str
+
+
+class JatsContent(OutputModel):
+    sections: list[RawSection]
+    license: str | None
+    license_url: HttpLink | None
 
 
 class SectionText(RawSection):
@@ -225,6 +243,12 @@ class ArticleRecord(ArticleMetadata):
     sections: list[RawSection]
 
 
+class LiteraturePage(OutputModel):
+    total: Nonnegative
+    next_cursor: CursorToken | None
+    results: list[ArticleRecord]
+
+
 class BoundedArticle(ArticleMetadata):
     sections: list[SectionText | SectionDirectory]
     text_budget: TextBudget
@@ -239,8 +263,8 @@ class ArticleResponse(BoundedArticle):
 class LiteratureSearchResponse(OutputModel):
     query: Nonblank
     total: Nonnegative
-    cursor: Nonblank
-    next_cursor: str | None
+    cursor: CursorToken
+    next_cursor: CursorToken | None
     results: list[BoundedArticle]
     retrieval: LiteratureRetrieval
     returned_count: Nonnegative

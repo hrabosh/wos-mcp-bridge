@@ -38,15 +38,18 @@ async def test_supplied_citation_counts_are_preserved(make_client, count):
     assert (await client.search("TS=canine"))["results"][0]["citations"] == {"WOS": count}
 
 
-@pytest.mark.parametrize("count", [True, -1, "12", None])
-async def test_invalid_citation_counts_are_not_reported_as_facts(make_client, count):
+@pytest.mark.parametrize("count", [True, -1, "12"])
+async def test_invalid_citation_counts_are_rejected_without_poisoning_cache(make_client, count):
     def handler(request):
         body = api_response(request).json()
-        body["hits"][0]["citations"] = [{"db": "WOS", "count": count}]
+        body["hits"][0]["citations"] = [{"db": "WOS", "count": count if len(calls) == 1 else 12}]
         return httpx.Response(200, json=body)
 
-    client, _ = make_client(handler)
-    assert (await client.search("TS=canine"))["results"][0]["citations"] is None
+    client, calls = make_client(handler)
+    with pytest.raises(WosError):
+        await client.search("TS=canine")
+    assert (await client.search("TS=canine"))["results"][0]["citations"] == {"WOS": 12}
+    assert len(calls) == 2
 
 
 async def test_query_and_record_cache_avoid_extra_requests(make_client):

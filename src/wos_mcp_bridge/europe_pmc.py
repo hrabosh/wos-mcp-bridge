@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from .article_xml import extract_jats, plain_text, validate_text
 from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
-from .models import ArticleRecord, Bibliography
+from .models import ArticleRecord, Bibliography, JatsContent, LiteraturePage
 
 
 def identifier(value: str) -> tuple[str, str]:
@@ -190,11 +190,14 @@ class EuropePmcClient:
         ):
             raise LiteratureError("Europe PMC returned malformed search results.")
         next_cursor = data.get("nextCursorMark")
-        return {
-            "total": data["hitCount"],
-            "next_cursor": next_cursor if isinstance(next_cursor, str) else None,
-            "results": [normalise(hit) for hit in results["result"][:limit]],
-        }
+        try:
+            return LiteraturePage(
+                total=data["hitCount"],
+                next_cursor=next_cursor,
+                results=[normalise(hit) for hit in results["result"][:limit]],
+            ).model_dump(mode="json", exclude_unset=True)
+        except ValidationError:
+            raise LiteratureError("Europe PMC returned malformed search pagination.") from None
 
     async def resolve(self, value: str) -> JsonObject:
         kind, key = identifier(value)
@@ -223,6 +226,15 @@ class EuropePmcClient:
         if kind != "pmcid":
             raise LiteratureError("Full text XML requires a PMCID.")
         data, retrieval = await self._api.get(
-            f"{key}/fullTextXML", parse=lambda raw: extract_jats(raw, expected_pmcid=key)
+            f"{key}/fullTextXML", parse=lambda raw: self._parse_full_text(raw, key)
         )
         return {**data, "retrieval": retrieval}
+
+    @staticmethod
+    def _parse_full_text(raw: bytes, pmcid: str) -> JsonObject:
+        content = extract_jats(raw, expected_pmcid=pmcid)
+        content["license_url"] = safe_url(content["license_url"])
+        try:
+            return JatsContent.model_validate(content).model_dump(mode="json", exclude_unset=True)
+        except ValidationError:
+            raise LiteratureError("Europe PMC returned malformed article sections.") from None

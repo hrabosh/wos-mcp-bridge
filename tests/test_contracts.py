@@ -350,3 +350,129 @@ async def test_wos_null_keywords_preserve_empty_legacy_list(make_client):
     )
     result = await client.search("TS=(test)")
     assert result["results"][0]["keywords"] == []
+
+
+def test_contract_format_checkers_are_installed():
+    checker = FormatChecker()
+    assert {"iri", "date-time"} <= checker.checkers.keys()
+    assert not checker.conforms("https://example.org/paper%ZZ", "iri")
+    assert not checker.conforms("2026-01-01T10:20:30+00:75", "date-time")
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "https://example.org/paper%ZZ",
+        "https://example.org/{}",
+        "https://example.org/[path]",
+        "https://example.org/#one#two",
+    ],
+)
+async def test_invalid_openalex_link_does_not_poison_cache(bad_url):
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        work = copy.deepcopy(WORK)
+        if len(calls) == 1:
+            work["best_oa_location"]["pdf_url"] = bad_url
+        return httpx.Response(200, json=work)
+
+    client = OpenAlexClient(transport=httpx.MockTransport(handle), min_interval=0)
+    try:
+        with pytest.raises(LiteratureError):
+            await client.resolve(DOI)
+        assert (await client.resolve(DOI))["article"]["title"]
+        assert len(calls) == 2
+    finally:
+        await client.aclose()
+
+
+def test_invalid_timestamp_offset_is_rejected():
+    from pydantic import ValidationError
+
+    from wos_mcp_bridge.models import LiteratureRetrieval
+
+    with pytest.raises(ValidationError):
+        LiteratureRetrieval(
+            source="Europe PMC", cached=False, fetched_at_utc="2026-01-01T10:20:30+00:75"
+        )
+
+
+@pytest.mark.parametrize(
+    "section_id",
+    ["  ", "s" * 513, "bad&#10;id", " padded "],
+    ids=["blank", "too-long", "control", "padded"],
+)
+async def test_invalid_xml_sections_do_not_poison_cache(section_id):
+    from test_literature import JATS
+
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(
+            200,
+            content=f'<article><body><sec id="{section_id}"><p>hello</p></sec></body></article>'.encode()
+            if len(calls) == 1
+            else JATS,
+        )
+
+    client = EuropePmcClient(transport=httpx.MockTransport(handle), min_interval=0)
+    try:
+        with pytest.raises(LiteratureError):
+            await client.full_text("PMC12345")
+        assert (await client.full_text("PMC12345"))["sections"]
+        assert len(calls) == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "bad_cursor", [42, "x" * 2049, "bad\ncursor"], ids=["wrong-type", "too-long", "control"]
+)
+async def test_invalid_continuation_does_not_poison_cache(bad_cursor):
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        body = search_body()
+        if len(calls) == 1:
+            body["nextCursorMark"] = bad_cursor
+        return httpx.Response(200, json=body)
+
+    client = EuropePmcClient(transport=httpx.MockTransport(handle), min_interval=0)
+    try:
+        with pytest.raises(LiteratureError):
+            await client.search("same")
+        result = await client.search("same")
+        assert result["next_cursor"] == "next"
+        assert len(calls) == 2
+    finally:
+        await client.aclose()
+
+
+async def test_unicode_openalex_url_preserves_iri_contract():
+    url = "https://例え.テスト/článek?q=věda#výsledek"
+    work = copy.deepcopy(WORK)
+    work["best_oa_location"]["pdf_url"] = url
+    client = OpenAlexClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=work)), min_interval=0
+    )
+    try:
+        article = (await client.resolve(DOI))["article"]
+        assert article["url"] == url
+        assert FormatChecker().conforms(article["url"], "iri")
+    finally:
+        await client.aclose()
+
+
+async def test_unknown_citation_count_remains_null(make_client):
+    from conftest import HIT as WOS_HIT
+
+    hit = copy.deepcopy(WOS_HIT)
+    hit["citations"] = [{"db": "WOS", "count": None}]
+    client, _ = make_client(
+        lambda _: httpx.Response(200, json={"metadata": {"total": 1}, "hits": [hit]})
+    )
+    assert (await client.search("TS=test"))["results"][0]["citations"] is None

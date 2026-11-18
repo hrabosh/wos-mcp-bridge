@@ -46,7 +46,10 @@ null state. Literature records retain `doi`, `pmid`, `pmcid`, and source identif
 
 ## Missing values, access and text
 
-Unknown citation counts remain `null`; a supplied zero remains zero. Optional
+Unknown citation counts remain `null`; a supplied zero remains zero. A supplied
+malformed count (such as a boolean, negative value or numeric string) now causes
+a safe provider error before caching. This tightens malformed-response handling
+without changing valid or missing-count responses. Optional
 fields that were absent stay absent; known missing values use explicit nulls.
 Strict models reject booleans as numbers, malformed known metadata, unexpected
 normalized fields and non-finite numbers rather than coercing them into facts.
@@ -66,7 +69,9 @@ bounds. Queries accept 1–4,000 characters without control characters; WoS and 
 PMC keep their separate query syntaxes. Record limits are 1–50; explicit WoS pages
 are 1–2,147,483,647. Text limits are 1–20,000 characters; section offsets are
 nonnegative integers. Numeric arguments reject booleans and numeric strings.
-Cursors are bounded to 2,048 characters and section IDs to 512.
+Cursors are bounded to 2,048 characters and section IDs to 512. Neither may contain
+control characters or leading/trailing whitespace. Returned continuations and XML
+section IDs are checked before caching, so they remain usable as subsequent inputs.
 
 WoS fetch IDs use `WOS:` accession syntax and are at most 104 characters. Article
 identifiers are bounded to 512 characters and accept bare DOIs, `DOI:` prefixes,
@@ -78,7 +83,9 @@ Service objects, request context and API keys never appear in tool input schemas
 ## Verification and references
 
 Contract tests validate real tool results against schemas obtained through MCP
-discovery, with JSON Schema format checking. Cases include successful and empty
+discovery, with the IRI and date-time format checkers installed and explicitly
+asserted. Runtime checks reject malformed percent escapes, unescaped invalid URL
+characters and invalid timestamp offsets while preserving supported Unicode links. Cases include successful and empty
 searches, source fallback, null metadata, not-found records, directories and
 truncated text; tests also compare both result representations.
 

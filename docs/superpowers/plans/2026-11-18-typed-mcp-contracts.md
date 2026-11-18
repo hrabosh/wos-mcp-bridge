@@ -49,9 +49,9 @@
 
 ## Task 3: Review and verification
 
-- [ ] Run an independent code review, fix material findings with regressions and verify all checks.
-- [ ] Build/install a wheel outside the checkout and verify schema discovery over real stdio in handshake mode.
-- [ ] Commit this issue separately on the existing managed refactoring branch; preserve it locally for review.
+- [x] Run an independent code review, fix material findings with regressions and verify all checks.
+- [x] Build/install a wheel outside the checkout and verify schema discovery over real stdio in handshake mode.
+- [x] Commit this issue separately on the existing managed refactoring branch; preserve it locally for review.
 
 ## Baseline
 
@@ -62,3 +62,12 @@
 - Tasks 1 and 2 complete: observed failing discovery/provider/input regressions before implementation; all 230 offline tests now pass (1 opt-in live test skipped). Ruff checks, formatting and diff whitespace checks pass.
 - Compatibility regression checks preserve WoS page objects and null keywords; incomplete author lists remain unknown in common metadata.
 - No new runtime dependencies; jsonschema is an explicit test dependency.
+
+- Independent review of 4532080..5c1190b found four material gaps; all fixed with observed failing regressions followed by passing checks:
+  - JATS typed section validation now precedes cache insertion; blank, overlong, control-containing and padded IDs cannot poison the cache.
+  - Supplied malformed citation counts are rejected; absent/null counts remain unknown and zero remains zero.
+  - Continuation cursors use the same supported constraints before caching and during MCP input validation.
+  - Runtime HTTP IRI/timestamp checks agree with advertised formats; test-only format checkers are installed and their registration/rejection behavior is asserted.
+- Final review fix suite: 244 passed, 1 opt-in live integration skipped. Ruff lint and formatting and git diff whitespace checks passed.
+- Rebuilt and installed the reviewed wheel outside the checkout. Module, console and compatibility entrypoints all passed real stdio discovery of seven concrete schemas, invalid-input rejection and subprocess cleanup with synthetic credentials and no live provider calls.
+- No deferred review findings. Original main checkout remains clean; the implementation branch/worktree is preserved locally.

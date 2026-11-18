@@ -14,10 +14,12 @@ from .application import Services
 from .literature_http import LiteratureError
 from .models import (
     ArticleResponse,
+    CursorToken,
     FetchResponse,
     LiteratureSearchResponse,
     OutputModel,
     SearchResponse,
+    SectionKey,
     SectionResponse,
     SortOrder,
     WosSearchResponse,
@@ -102,23 +104,15 @@ ArticleIdentifier = Annotated[
     ),
 ]
 Cursor = Annotated[
-    str,
+    CursorToken,
     Field(
-        strict=True,
-        min_length=1,
-        max_length=2048,
-        pattern=NO_CONTROLS,
         description="Opaque Europe PMC next_cursor from the previous page; * starts a search.",
         examples=["*"],
     ),
 ]
 SectionId = Annotated[
-    str,
+    SectionKey,
     Field(
-        strict=True,
-        min_length=1,
-        max_length=512,
-        pattern=NO_CONTROLS,
         description="Exact section.id returned by get_article; never a guessed section heading.",
         examples=["methods", "section-3"],
     ),

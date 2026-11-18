@@ -274,14 +274,22 @@ def _normalise(hit: Any) -> JsonObject:
     authors = [] if authors is None else authors
     if not isinstance(citations, list) or not isinstance(authors, list):
         raise WosError("Clarivate returned malformed author or citation metadata.")
-    counts = {
-        item["db"]: item["count"]
-        for item in citations
-        if isinstance(item, dict)
-        and isinstance(item.get("db"), str)
-        and type(item.get("count")) is int
-        and item["count"] >= 0
-    }
+    counts = {}
+    for item in citations:
+        if not isinstance(item, dict):
+            raise WosError("Clarivate returned malformed citation metadata.")
+        count = item.get("count")
+        if count is None:
+            continue
+        database = item.get("db")
+        if (
+            not isinstance(database, str)
+            or not database.strip()
+            or type(count) is not int
+            or count < 0
+        ):
+            raise WosError("Clarivate returned malformed citation metadata.")
+        counts[database] = count
     keywords = _object(hit.get("keywords")).get("authorKeywords")
     record = {
         "id": uid,
