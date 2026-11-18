@@ -30,3 +30,6 @@ passed installed stdio smoke checks. The README commands ran in a
 fresh environment from the unpacked source archive. The CLI reported 0.1.0 and
 the demo output matched the README JSON exactly. Local links in the source
 distribution resolved, including heading anchors.
+
+The repository owner enabled GitHub private vulnerability reporting. The
+repository's GitHub settings endpoint confirmed that the channel is enabled.

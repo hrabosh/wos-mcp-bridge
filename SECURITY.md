@@ -6,8 +6,8 @@ and availability are best effort.
 ## Report a vulnerability privately
 
 Use the repository's [private vulnerability report form](https://github.com/hrabosh/wos-mcp-bridge/security/advisories/new)
-when enabled. Include the affected version, transport, impact and a minimal
-reproduction with synthetic data. Remove API keys, tokens and any restricted
+to send a report directly to the maintainers. Include the affected version,
+transport, impact and a minimal reproduction with synthetic data. Remove API keys, tokens and any restricted
 provider records from the report.
 
 If the form is unavailable, open a GitHub issue asking the maintainer for a
