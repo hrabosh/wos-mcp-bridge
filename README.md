@@ -104,10 +104,8 @@ the service boundaries and client ownership.
 
 [GitHub Actions](https://github.com/hrabosh/wos-mcp-bridge/actions) defines checks
 for Python 3.12 and 3.14, lint, type checking and installation from built artifacts.
-See the [changelog](CHANGELOG.md) for the first release candidate and migration
-notes, and [releasing](docs/releasing.md) for publication status and verification.
-The source and built distributions are the supported installation paths for
-this release candidate.
+See the [changelog](CHANGELOG.md) for the 0.1.0 release and migration notes, and
+the [release guide](docs/releasing.md) for distribution and verification.
 
 For development setup and ordinary issues, see [Contributing](CONTRIBUTING.md).
 For vulnerability reports, see the [security policy](SECURITY.md).

@@ -1,10 +1,9 @@
 # Changelog
 
-## 0.1.0 release candidate
+## 0.1.0 — 2026-11-18
 
-This entry describes the first planned public package release. The package and
-CLI report version `0.1.0`. Use the [release guide](docs/releasing.md) to verify
-the built artifacts.
+The first packaged release combines Web of Science Core Collection search with
+literature resolution from Europe PMC and OpenAlex.
 
 - Package seven read-only MCP tools for WoS, Europe PMC and OpenAlex. The
   application factory owns client startup, cleanup and provider configuration.

@@ -165,9 +165,6 @@ works before a PyPI release; it does not imply that a public package exists.
   client, and confirm one permitted call in the chosen deployment. Record the client,
   transport, protocol revision and outcome with the release notes, tag and hashes.
 
-The workflow is prepared; no public release, tag push, PyPI project or deployment
-has been created by implementing #7.
-
 ## MCP Registry
 
 Keep the version in `server.json` and its PyPI package entry aligned with
