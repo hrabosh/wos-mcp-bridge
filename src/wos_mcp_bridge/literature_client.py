@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import copy
 
-from article_xml import validate_text
-from europe_pmc import EuropePmcClient, identifier, safe_url
-from literature_http import JsonObject, LiteratureError
-from openalex_client import OpenAlexClient
+from .article_xml import validate_text
+from .europe_pmc import EuropePmcClient, identifier, safe_url
+from .literature_http import JsonObject, LiteratureError
+from .openalex_client import OpenAlexClient
 
 MAX_TEXT_CHARS = 20_000
 

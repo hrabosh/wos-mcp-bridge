@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from literature_client import LiteratureClient
+from wos_mcp_bridge.literature_client import LiteratureClient
 
 
 @pytest.mark.integration

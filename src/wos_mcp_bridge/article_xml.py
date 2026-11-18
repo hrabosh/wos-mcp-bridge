@@ -9,7 +9,7 @@ from xml.etree.ElementTree import Element, ParseError
 from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import fromstring
 
-from literature_http import JsonObject, LiteratureError
+from .literature_http import JsonObject, LiteratureError
 
 
 class _PlainText(HTMLParser):

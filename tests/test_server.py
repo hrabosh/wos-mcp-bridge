@@ -5,16 +5,20 @@ import json
 import pytest
 from fastmcp import Client
 
-import server
+from wos_mcp_bridge import server
+from wos_mcp_bridge.literature_client import LiteratureClient
 
 
 @pytest.fixture
-async def mcp_client(make_client, monkeypatch):
+async def mcp_client(make_client):
     wos, requests = make_client()
-    monkeypatch.setattr(server, "WosClient", lambda _key: wos)
-    async with Client(server.mcp) as client:
-        yield client, requests
-    assert wos._http.is_closed
+    literature = LiteratureClient()
+    try:
+        application = server.create_server(services=server.Services(wos, literature))
+        async with Client(application) as client:
+            yield client, requests
+    finally:
+        await literature.aclose()
 
 
 async def test_discovery_exposes_only_read_only_tools(mcp_client):

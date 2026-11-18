@@ -1,7 +1,7 @@
 # Web of Science MCP bridge
 
 A small, read-only MCP server for the **Clarivate Web of Science Starter API**,
-**Europe PMC**, and **OpenAlex**. It supports veterinary literature searches,
+**Europe PMC**, and **OpenAlex**. It supports general scientific literature searches,
 bibliographic records, available abstracts, and legal open-access article sections.
 It is not an official Clarivate or OpenAI product.
 
@@ -37,7 +37,7 @@ TS=(canine AND lobectom*) AND PY=(2020-2026)
 `TC+D`: most cited, when permitted by your subscription. Ascending variants use `+A`.
 The result limit is 1-50. Pagination is explicit; no automatic extra requests are made.
 
-### Veterinary articles and open access
+### Literature and open access
 
 `search_literature` uses [Europe PMC query syntax](https://europepmc.org/help),
 including free text and field filters, for example:
@@ -103,7 +103,9 @@ For a managed deployment, use a host that supplies **HTTPS and MCP-compatible OA
 
 1. Connect this repository to the host; grant access only to the repositories it needs.
 2. Select branch `main` and entrypoint **`server.py:mcp`**.
-3. Use **Python 3.12** and install **`requirements.txt`**. There is no build step.
+3. Use **Python 3.12 or newer** and install the project with **`python -m pip install .`**.
+   This installs the package and its pinned runtime dependencies. Existing deployments
+   that only installed `requirements.txt` must add this project-install step.
 4. Add **`WOS_API_KEY`** in the host's secret environment settings.
 5. **Enable authentication** and restrict access to your own account/organization.
 6. Deploy and copy the MCP URL supplied by the host.
@@ -149,6 +151,7 @@ Python **3.12 or newer**:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
+python -m pip install --no-deps -e .
 python -m pytest -q
 python -m ruff check .
 python -m ruff format --check .
@@ -192,15 +195,20 @@ Independent async API clients, no database, vector index, background workers,
 or extra web framework:
 
 ```text
-server.py                MCP tools, lifespan, and response serialization
-wos_client.py            Async HTTP client, validation, throttling, and cache
-literature_http.py       Fixed-host GET, bounded TTL/LRU cache, throttling and errors
-europe_pmc.py            Europe PMC search, identifier resolution and OA XML
-openalex_client.py       OpenAlex OA location discovery
-article_xml.py           Safe JATS section and abstract text extraction
-literature_client.py     Normalization, deduplication and text budgets
-tests/                   Synthetic HTTP fixtures and in-process MCP tests
-.github/workflows/ci.yml  Lint, formatting, and tests
+server.py                         Compatibility entrypoint for existing hosting
+src/wos_mcp_bridge/server.py       MCP factory and server instructions
+src/wos_mcp_bridge/tools.py        Seven thin MCP adapters and serialization
+src/wos_mcp_bridge/config.py       Explicit immutable settings, secret-safe repr
+src/wos_mcp_bridge/application.py  Service composition and resource ownership
+src/wos_mcp_bridge/wos_client.py   WoS validation, normalization and API operations
+src/wos_mcp_bridge/http_support.py Shared bounded cache and upstream request policy
+src/wos_mcp_bridge/literature_http.py Fixed-host validated literature transport
+src/wos_mcp_bridge/europe_pmc.py   Europe PMC search, resolution and OA XML
+src/wos_mcp_bridge/openalex_client.py OpenAlex identity and OA location discovery
+src/wos_mcp_bridge/article_xml.py  Safe JATS extraction as pure functions
+src/wos_mcp_bridge/literature_client.py Literature orchestration and text budgets
+tests/                            Synthetic HTTP fixtures and MCP/lifespan tests
+.github/workflows/ci.yml           Lint, formatting, and tests
 ```
 
 The HTTP client reuses pooled connections and is closed on server shutdown.
@@ -209,10 +217,13 @@ REST path), and `api.openalex.org` are used; there is no arbitrary URL-fetch too
 scraper, filesystem tool, or shell command exposed to the model. Outbound redirects
 are not followed. Error messages do not echo upstream bodies or credentials.
 
-Requests are serialized and spaced at least **1.1 seconds** apart, with a **30-second
-HTTP timeout** and **10-second connection timeout**. There are no automatic retries.
-A **15-minute, 128-entry in-memory cache** reduces repeated searches and lets fetches
-reuse recently returned search records. Reading a cached entry does not extend its
+Uncached requests to each upstream are serialized and spaced at least **1.1 seconds**
+apart. Each provider operation has a **30-second overall deadline**, including queueing,
+rate-limit waits and network I/O, plus a **10-second connection timeout**. An article
+operation can compose multiple provider calls; this is not a 30-second end-to-end
+MCP deadline. There are no automatic retries.
+A **15-minute, 128-entry in-memory cache** (at most 16 MiB of serialized keys and
+values) reduces repeated searches and lets fetches reuse recently returned search records. Reading a cached entry does not extend its
 expiry. Returned cache values are copied so callers cannot mutate stored results.
 
 **Run one process/replica per API key.** The limiter and cache are per process, not
@@ -221,14 +232,52 @@ Clarivate is the authority for daily limits. Cache hits return quota headers obs
 at the original fetch time, **not the current remaining quota**. The bridge does not
 locally enforce a daily budget or coordinate multiple deployments.
 
-Each literature API has its own connection pool, serialized requests spaced at
-least 1.1 seconds apart, 30-second HTTP/10-second connection timeouts, and a
-15-minute cache (128 entries, at most 16 MiB). Individual decoded upstream responses
-are capped at 8 MiB, including XML. Cache hits do not extend expiry; callers receive
-independent values. HTTP 429 honors `Retry-After` (seconds/date, capped at one hour;
+Each literature API has its own connection pool, request policy and validated response
+cache with the same default deadlines and limits. The cache has at most 128 entries
+and 16 MiB of serialized keys and values; Python object overhead is additional.
+Individual decoded upstream responses are capped at 8 MiB for every provider,
+including WoS JSON and Europe PMC XML. Only validated responses enter a cache.
+Cache hits do not extend expiry; callers receive
+independent values, and cached reads bypass an unrelated slow network request.
+Concurrent identical successful calls share a result. Cancelling a request owner
+cancels its HTTP request; a waiting caller can then issue a replacement. No detached
+request tasks are created. For every provider, HTTP 429 honors `Retry-After`
+(seconds/date, capped at one hour;
 60 seconds if missing/invalid) by rejecting new uncached calls during cooldown.
 Redirects and environment proxies are disabled. No new infrastructure is required;
-`defusedxml` is the only additional runtime dependency, for safe XML parsing.
+`defusedxml` protects XML parsing. This refactor adds no runtime dependencies.
+
+## Application composition
+
+The MCP adapter depends on concrete application services; services and API clients
+do not import FastMCP. The [architecture decision](docs/decisions/0001-application-composition.md)
+explains the boundaries and tradeoffs.
+
+```mermaid
+flowchart LR
+    MCP[Seven MCP tools] --> Services[Application services]
+    Services --> WoS[WoS client]
+    Services --> Literature[Literature orchestration]
+    Literature --> PMC[Europe PMC client]
+    Literature --> OA[OpenAlex client]
+    WoS --> Policies[Cache and request policy]
+    PMC --> Transport[Fixed-host literature transport]
+    OA --> Transport
+    Transport --> Policies
+```
+
+`create_server(settings)` creates an independent server. Its lifespan owns the
+clients it creates and closes them in reverse construction order, even if startup
+fails partway through. `create_server(services=Services(...))` borrows existing
+clients; their caller owns cleanup. Neither factory construction nor package import
+creates HTTP clients or reads API keys. Environment defaults are resolved when
+the server lifespan starts.
+
+After installation, `python -m wos_mcp_bridge`, `wos-mcp-bridge`, and the original
+`python server.py` all start the local stdio server. Managed hosting can keep
+`server.py:mcp` after adding the project-install step above, or import
+`wos_mcp_bridge.server:mcp` directly. The internal root-level Python modules have
+moved under `wos_mcp_bridge`; direct integrations must update their imports.
 
 ## Troubleshooting
 

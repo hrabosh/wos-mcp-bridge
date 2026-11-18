@@ -14,7 +14,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from http_support import (
+from .http_support import (
     Clock,
     CooldownActive,
     RequestPolicy,

@@ -6,11 +6,11 @@ import copy
 import httpx
 import pytest
 
-from article_xml import extract_jats
-from europe_pmc import EuropePmcClient, identifier, normalise
-from literature_client import LiteratureClient, deduplicate
-from literature_http import LiteratureError
-from openalex_client import OpenAlexClient
+from wos_mcp_bridge.article_xml import extract_jats
+from wos_mcp_bridge.europe_pmc import EuropePmcClient, identifier, normalise
+from wos_mcp_bridge.literature_client import LiteratureClient, deduplicate
+from wos_mcp_bridge.literature_http import LiteratureError
+from wos_mcp_bridge.openalex_client import OpenAlexClient
 
 DOI = "10.1234/vet-test"
 HIT = {
@@ -507,7 +507,7 @@ def test_retry_after_date_and_invalid_values():
     from datetime import UTC, datetime
     from email.utils import format_datetime
 
-    from http_support import retry_after
+    from wos_mcp_bridge.http_support import retry_after
 
     now = datetime(2026, 1, 1, tzinfo=UTC)
     value = format_datetime(datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC))

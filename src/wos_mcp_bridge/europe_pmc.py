@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from typing import Unpack
 from urllib.parse import urlsplit
 
-from article_xml import extract_jats, plain_text, validate_text
-from literature_http import ApiClient, JsonObject, LiteratureError
+from .article_xml import extract_jats, plain_text, validate_text
+from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
 
 
 def identifier(value: str) -> tuple[str, str]:
@@ -107,16 +108,21 @@ def normalise(hit: object) -> JsonObject:
     }
 
 
-class EuropePmcClient(ApiClient):
-    def __init__(self, **kwargs) -> None:
-        super().__init__("Europe PMC", **kwargs)
+class EuropePmcClient:
+    """Europe PMC endpoint validation composed with a fixed-host transport."""
+
+    def __init__(self, **options: Unpack[ApiOptions]) -> None:
+        self._api = ApiClient("Europe PMC", **options)
+
+    async def aclose(self) -> None:
+        await self._api.aclose()
 
     async def search(self, query: str, limit: int = 10, cursor: str = "*") -> JsonObject:
         query = validate_text(query, "query", 4000)
         cursor = validate_text(cursor, "cursor", 2048)
         if type(limit) is not int or not 1 <= limit <= 50:
             raise LiteratureError("limit must be an integer from 1 to 50.")
-        data, retrieval = await self._json(
+        data, retrieval = await self._api.get_json(
             "search",
             {
                 "query": query,
@@ -172,7 +178,7 @@ class EuropePmcClient(ApiClient):
         kind, key = identifier(pmcid)
         if kind != "pmcid":
             raise LiteratureError("Full text XML requires a PMCID.")
-        data, retrieval = await self._get(
+        data, retrieval = await self._api.get(
             f"{key}/fullTextXML", parse=lambda raw: extract_jats(raw, expected_pmcid=key)
         )
         return {**data, "retrieval": retrieval}

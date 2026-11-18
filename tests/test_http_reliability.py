@@ -11,10 +11,10 @@ import pytest
 from conftest import HIT as WOS_HIT
 from test_literature import DOI, JATS, WORK, search_body
 
-from europe_pmc import EuropePmcClient
-from literature_http import LiteratureError
-from openalex_client import OpenAlexClient
-from wos_client import WosClient, WosError
+from wos_mcp_bridge.europe_pmc import EuropePmcClient
+from wos_mcp_bridge.literature_http import LiteratureError
+from wos_mcp_bridge.openalex_client import OpenAlexClient
+from wos_mcp_bridge.wos_client import WosClient, WosError
 
 
 @pytest.fixture(params=["wos", "europe_pmc"])
@@ -213,3 +213,47 @@ async def test_total_deadline_includes_rate_limit_wait(provider):
     with pytest.raises(ERRORS, match="timed out"):
         await client.search("second")
     assert len(calls) == 1
+
+
+async def test_cancelling_a_queued_waiter_preserves_owner_and_cache(provider):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def handler(_):
+        started.set()
+        await release.wait()
+        return httpx.Response(200, json=healthy())
+
+    client, calls, healthy = provider(handler)
+    owner = asyncio.create_task(client.search("same-query"))
+    await asyncio.wait_for(started.wait(), 1)
+    waiter = asyncio.create_task(client.search("same-query"))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    finally:
+        release.set()
+        await owner
+    assert (await client.search("same-query"))["retrieval"]["cached"] is True
+    assert (await client.search("another-query"))["results"]
+    assert len(calls) == 2
+
+
+async def test_cooldown_expires_without_holding_the_request_queue(provider):
+    clock = [100.0]
+
+    def handler(_):
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": "60"})
+        return httpx.Response(200, json=healthy())
+
+    client, calls, healthy = provider(handler, clock=lambda: clock[0])
+    with pytest.raises(ERRORS, match="rate limit"):
+        await client.search("first")
+    clock[0] = 159
+    with pytest.raises(ERRORS, match="cooldown"):
+        await client.search("second")
+    clock[0] = 160
+    assert (await client.search("second"))["results"]
+    assert len(calls) == 2

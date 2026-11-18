@@ -6,10 +6,11 @@ import asyncio
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TypedDict
 
 import httpx
 
-from http_support import (
+from .http_support import (
     Clock,
     CooldownActive,
     JsonObject,
@@ -28,6 +29,18 @@ API_URLS = {
     "Europe PMC": "https://www.ebi.ac.uk/europepmc/webservices/rest/",
     "OpenAlex": "https://api.openalex.org/",
 }
+
+
+class ApiOptions(TypedDict, total=False):
+    transport: httpx.AsyncBaseTransport | None
+    min_interval: float
+    cache_ttl: float
+    max_response_bytes: int
+    cache_max_bytes: int
+    cache_max_entries: int
+    operation_timeout: float
+    clock: Clock | None
+    sleep: Sleep | None
 
 
 class LiteratureError(Exception):
@@ -84,7 +97,7 @@ class ApiClient:
             result["retrieval"]["cached"] = True
         return result
 
-    async def _get(
+    async def get(
         self,
         path: str,
         params: JsonObject | None = None,
@@ -139,7 +152,7 @@ class ApiClient:
         except ResponseTooLarge:
             raise LiteratureError(f"{self.source} response exceeds the size limit.") from None
 
-    async def _json(
+    async def get_json(
         self,
         path: str,
         params: JsonObject | None = None,
@@ -155,4 +168,4 @@ class ApiClient:
                 raise LiteratureError(f"{self.source} returned malformed metadata.")
             return parse(data)
 
-        return await self._get(path, params, parse=decode)
+        return await self.get(path, params, parse=decode)

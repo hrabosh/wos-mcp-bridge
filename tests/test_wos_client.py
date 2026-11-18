@@ -5,7 +5,7 @@ import httpx
 import pytest
 from conftest import HIT, api_response
 
-from wos_client import WosClient, WosError
+from wos_mcp_bridge.wos_client import WosClient, WosError
 
 
 async def test_search_sends_fixed_endpoint_and_exact_query(make_client):

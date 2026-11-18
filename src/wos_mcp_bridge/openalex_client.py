@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Unpack
 from urllib.parse import quote
 
-from europe_pmc import _optional_id, identifier, safe_url
-from literature_http import ApiClient, JsonObject, LiteratureError
+from .europe_pmc import _optional_id, identifier, safe_url
+from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
 
 
-class OpenAlexClient(ApiClient):
-    def __init__(self, api_key: str = "", **kwargs) -> None:
-        super().__init__("OpenAlex", api_key=api_key, **kwargs)
+class OpenAlexClient:
+    """OpenAlex identity and access validation with a fixed-host transport."""
+
+    def __init__(self, api_key: str = "", **options: Unpack[ApiOptions]) -> None:
+        self._api = ApiClient("OpenAlex", api_key=api_key, **options)
+
+    async def aclose(self) -> None:
+        await self._api.aclose()
 
     async def resolve(self, value: str) -> JsonObject:
         kind, key = identifier(value)
@@ -21,7 +27,7 @@ class OpenAlexClient(ApiClient):
             f"https://doi.org/{key}" if kind == "doi" else f"pmid:{key}", safe=""
         )
         try:
-            data, retrieval = await self._json(
+            data, retrieval = await self._api.get_json(
                 path, parse=lambda data: self._parse_article(data, kind, key)
             )
         except LiteratureError as exc:
