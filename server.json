@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hrabosh/wos-mcp-bridge",
+  "title": "Web of Science MCP bridge",
+  "description": "Search Web of Science Core Collection and find open-access literature.",
+  "repository": {
+    "url": "https://github.com/hrabosh/wos-mcp-bridge",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "wos-mcp-bridge",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "WOS_API_KEY",
+          "description": "Your Clarivate Starter API key with Web of Science Core Collection access.",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "OPENALEX_API_KEY",
+          "description": "Optional OpenAlex API key for a higher request budget.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

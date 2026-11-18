@@ -30,6 +30,7 @@ SOURCE_FILES = {
     "requirements.txt",
     "requirements-dev.txt",
     "server.py",
+    "server.json",
     "setup.cfg",
 }
 EGG_INFO_FILES = {

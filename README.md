@@ -1,5 +1,7 @@
 # Web of Science MCP bridge
 
+<!-- mcp-name: io.github.hrabosh/wos-mcp-bridge -->
+
 Search Web of Science Core Collection from an MCP client using your Clarivate
 Starter API key. Find papers, retrieve bibliographic records, and pass a DOI to
 Europe PMC and OpenAlex to look for an abstract, open-access links or available

@@ -142,11 +142,11 @@ works before a PyPI release; it does not imply that a public package exists.
   path only after the package is available.
 - Complete review, the offline suite and all artifact checks. Record the commit,
   interpreter, lock, workflow result and artifact hashes with the release notes.
-- Before enabling publication, create the GitHub `pypi` environment with required
-  reviewers and restrict deployment to release tags. Configure a PyPI Trusted
-  Publisher (or pending publisher for the first release) for owner `hrabosh`, repo
-  `wos-mcp-bridge`, workflow `release.yml`, environment `pypi`. This task has not
-  configured either account or environment.
+- Verify that the GitHub `pypi` environment requires maintainer approval and
+  permits only release tags. Confirm the PyPI Trusted Publisher (or pending
+  publisher for the first release) uses owner `hrabosh`, repository
+  `wos-mcp-bridge`, and workflow `release.yml`. Set the publisher's environment
+  to `pypi` to bind it to the approval gate.
 - Create the exact `vVERSION` tag on the reviewed commit. Pushing a tag only builds
   and verifies artifacts; it does not publish. `check_dist.py dist --tag vVERSION`
   rejects a tag that differs from the artifacts/project version.
@@ -167,6 +167,26 @@ works before a PyPI release; it does not imply that a public package exists.
 
 The workflow is prepared; no public release, tag push, PyPI project or deployment
 has been created by implementing #7.
+
+## MCP Registry
+
+Keep the version in `server.json` and its PyPI package entry aligned with
+`pyproject.toml`. The `mcp-name` marker in the README must be present in the PyPI
+project description before Registry publication. The manifest advertises locally
+installed stdio with a user-supplied WoS key. Check the published build before
+listing it. [PyPI ownership verification](https://modelcontextprotocol.io/registry/package-types#pypi-packages)
+
+From the release checkout, authenticate as the owner of the GitHub namespace and
+publish the manifest with the official publisher:
+
+```bash
+mcp-publisher login github
+mcp-publisher publish
+```
+
+Confirm the public record lists the PyPI package and released version. The
+[Registry quickstart](https://modelcontextprotocol.io/registry/quickstart) covers
+installing the publisher and checking the record.
 
 ## Recovery
 
