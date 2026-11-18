@@ -158,13 +158,15 @@ uv sync --locked --python 3.12
 uv run --locked python -m pytest -q
 uv run --locked python -m ruff check .
 uv run --locked python -m ruff format --check .
+uv run --locked ty check --error-on-warning
 uv run --locked wos-mcp-bridge --version
 ```
 
 `pyproject.toml` declares dependency intent; `uv.lock` records the tested resolution.
 The requirements files are generated pip compatibility exports. See
 [packaging and releases](docs/releasing.md) for pip setup, deployment, dependency
-updates, wheel/source checks, pipx and the publication checklist.
+updates, wheel/source checks, pipx and the publication checklist. CI runs the
+offline suite on Python 3.12 and 3.14.
 
 Tests need no real API key and make no Clarivate requests. They cover validation,
 serialization, unknown versus zero citations, cache expiry and eviction, concurrent

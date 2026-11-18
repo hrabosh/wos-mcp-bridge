@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
@@ -20,7 +20,7 @@ class Services:
 
 
 @asynccontextmanager
-async def open_services(settings: Settings) -> AsyncIterator[Services]:
+async def open_services(settings: Settings) -> AsyncGenerator[Services]:
     """Register cleanup immediately, including failures partway through startup."""
     async with AsyncExitStack() as resources:
         wos = WosClient(

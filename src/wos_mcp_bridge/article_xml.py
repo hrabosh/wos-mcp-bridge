@@ -131,7 +131,7 @@ def extract_jats(raw: bytes, *, expected_pmcid: str | None = None) -> JsonObject
     return {"sections": sections, "license": license_text or None, "license_url": license_url}
 
 
-def validate_text(value: str, name: str, maximum: int) -> str:
+def validate_text(value: object, name: str, maximum: int) -> str:
     if not isinstance(value, str):
         raise LiteratureError(f"{name} must be a string.")
     if re.search(r"[\x00-\x1f\x7f]", value):

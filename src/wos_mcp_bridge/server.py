@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
@@ -31,7 +31,7 @@ def create_server(settings: Settings | None = None, *, services: Services | None
     """Build a server; injected services are borrowed and remain caller-owned."""
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Services]]:
+    async def lifespan(_server: FastMCP) -> AsyncGenerator[dict[str, Services]]:
         if services is not None:
             yield {"services": services}
         else:

@@ -13,7 +13,7 @@ from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
 from .models import ArticleRecord, Bibliography, JatsContent, LiteraturePage
 
 
-def identifier(value: str) -> tuple[str, str]:
+def identifier(value: object) -> tuple[str, str]:
     value = validate_text(value, "identifier", 512)
     value = re.sub(r"^(?:https://(?:dx\.)?doi\.org/|doi:)", "", value, flags=re.I)
     if re.fullmatch(r"10\.\d{4,9}/[^\s\"<>\\]+", value, flags=re.I):
@@ -191,10 +191,12 @@ class EuropePmcClient:
             raise LiteratureError("Europe PMC returned malformed search results.")
         next_cursor = data.get("nextCursorMark")
         try:
-            return LiteraturePage(
-                total=data["hitCount"],
-                next_cursor=next_cursor,
-                results=[normalise(hit) for hit in results["result"][:limit]],
+            return LiteraturePage.model_validate(
+                {
+                    "total": data["hitCount"],
+                    "next_cursor": next_cursor,
+                    "results": [normalise(hit) for hit in results["result"][:limit]],
+                }
             ).model_dump(mode="json", exclude_unset=True)
         except ValidationError:
             raise LiteratureError("Europe PMC returned malformed search pagination.") from None

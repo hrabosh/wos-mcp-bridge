@@ -43,15 +43,18 @@ jobs:
           python -m pip install uv==0.13.9
           uv sync --locked --python 3.12
       - name: Verify generated pip exports
+        if: github.event_name != 'pull_request'
         run: |
           git ls-files --error-unmatch requirements.txt requirements-dev.txt > /dev/null
           uv export --locked --no-dev --no-emit-project --no-hashes --output-file requirements.txt > /dev/null
           uv export --locked --no-emit-project --no-hashes --output-file requirements-dev.txt > /dev/null
           git diff --exit-code -- requirements.txt requirements-dev.txt
-      - name: Verify source
+      - name: Verify source before publication
+        if: github.event_name != 'pull_request'
         run: |
           uv run --locked python -m ruff check .
           uv run --locked python -m ruff format --check .
+          uv run --locked ty check --error-on-warning
           uv run --locked python -m pytest -q
       - name: Build and check distributions
         run: |

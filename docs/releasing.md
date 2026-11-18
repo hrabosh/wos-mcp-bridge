@@ -3,8 +3,8 @@
 The version, runtime dependency ranges, development dependencies, URLs and license
 are declared in `pyproject.toml`. The build backend is setuptools 84.2.1; uv 0.13.9
 resolves and runs the development/deployment environment. `uv.lock` records exact
-transitive versions, markers and artifact hashes. The initial lock retains the
-previously tested direct runtime versions, including FastMCP 4.0.10.
+transitive versions, markers and artifact hashes. The tested lock uses
+FastMCP 4.1.7 and MCP Python SDK 2.3.0.
 
 Package dependency ranges allow downstream environments to resolve compatible
 versions. The lock is the tested resolution for this repository; it is not a claim
@@ -22,6 +22,7 @@ uv sync --locked --python 3.12
 uv run --locked python -m pytest -q
 uv run --locked python -m ruff check .
 uv run --locked python -m ruff format --check .
+uv run --locked ty check --error-on-warning
 uv run --locked wos-mcp-bridge --version
 ```
 
@@ -63,7 +64,17 @@ Their pinned versions and environment markers support existing pip deployments;
 they omit hashes for compatibility. uv is the authoritative hash-bearing lock path.
 CI regenerates both files and rejects drift. Run the offline suite and artifact
 checks after an update. Update the explicit uv/tool pins together when upgrading
-build tooling; do not add another dependency manager.
+build tooling.
+
+On a dependency update and before release, audit the runtime export for known
+PyPI advisories. Run the command with each CI interpreter to include its
+platform and version markers. Review reported fixes, update the lock and rerun
+verification. [pip-audit documentation](https://github.com/pypa/pip-audit)
+
+```bash
+uvx --python 3.12 pip-audit --no-deps --disable-pip -r requirements.txt
+uvx --python 3.14 pip-audit --no-deps --disable-pip -r requirements.txt
+```
 
 ## Build and verify the actual artifacts
 
@@ -91,9 +102,16 @@ The smoke check creates separate temporary environments outside the checkout,
 installs the locked runtime dependencies, and installs each wheel/source artifact
 without re-resolving its dependencies. It verifies installed package location,
 credential-free module/console versions, import without constructing HTTP clients,
-and real stdio discovery of all seven output schemas plus an input-validation error.
-It uses synthetic credentials and disables the SDK's update check; no live provider
-calls are made. These checks do not establish a working hosted OAuth deployment.
+and stdio discovery of all seven output schemas. The MCP SDK negotiates protocol
+revision `2025-11-25` in the initialize handshake. A synthetic HTTP response
+exercises a successful WoS call and schema validation, and an invalid accession
+ID must produce a tool error. The smoke check validates every stdout line
+through subprocess exit. The fixture supplies synthetic credentials and blocks
+network access at the provider HTTP boundary for the successful path.
+
+This verifies installed subprocess interoperability with the locked MCP SDK.
+Run the [hosted transport checks in #8](https://github.com/hrabosh/wos-mcp-bridge/issues/8)
+before claiming compatibility with a particular hosted client and its OAuth flow.
 
 A pipx installation was also checked against the local wheel, outside the checkout:
 
@@ -137,8 +155,10 @@ works before a PyPI release; it does not imply that a public package exists.
   action. Only the publishing job has `id-token: write`; no long-lived PyPI token
   is used and PR jobs cannot enter it.
 - Inspect the resulting PyPI metadata and licenses, install the exact published
-  version outside the checkout, and repeat the client/deployment checks appropriate
-  to the intended release. Publish release notes with the matching tag and hashes.
+  version outside the checkout. For a hosted release, verify authentication with
+  missing, invalid and valid tokens, discover the expected tools in the intended
+  client, and confirm one permitted call in the chosen deployment. Record the client,
+  transport, protocol revision and outcome with the release notes, tag and hashes.
 
 The workflow is prepared; no public release, tag push, PyPI project or deployment
 has been created by implementing #7.

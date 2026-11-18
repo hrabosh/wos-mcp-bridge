@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -230,7 +230,7 @@ class WosClient:
         }
 
     @asynccontextmanager
-    async def _operation(self) -> AsyncIterator[None]:
+    async def _operation(self) -> AsyncGenerator[None]:
         try:
             async with asyncio.timeout(self._operation_timeout), self._policy.lock:
                 yield

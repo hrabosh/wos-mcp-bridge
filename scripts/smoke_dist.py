@@ -13,9 +13,11 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-from fastmcp import Client
-from fastmcp.client.transports import StdioTransport
-from jsonschema import Draft202012Validator
+from anyio import fail_after
+from jsonschema import Draft202012Validator, FormatChecker
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.types import TextContent, jsonrpc_message_adapter
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = {
@@ -38,27 +40,66 @@ def run(command: list[str], cwd: Path, environment: dict[str, str]) -> str:
     return completed.stdout.strip()
 
 
-async def discovery(command: str, args: list[str], cwd: Path, environment: dict[str, str]) -> None:
-    transport = StdioTransport(
-        command=command,
-        args=args,
-        cwd=str(cwd),
+async def exercise_stdio(
+    python: Path, command: list[str], cwd: Path, *, synthetic_search: bool = False
+) -> None:
+    launcher = cwd / "smoke_stdio_server.py"
+    transcript = cwd / "stdout.jsonl"
+    completed = transcript.with_suffix(".complete")
+    completed.unlink(missing_ok=True)
+    transcript.unlink(missing_ok=True)
+    server = StdioServerParameters(
+        command=str(python),
+        args=["-I", str(launcher), "--capture-stdout", str(transcript), *command],
+        cwd=cwd,
         env={
-            **environment,
+            "FASTMCP_CHECK_FOR_UPDATES": "off",
             "WOS_API_KEY": "synthetic-distribution-smoke-key",
             "OPENALEX_API_KEY": "",
         },
-        keep_alive=False,
     )
-    async with asyncio.timeout(25):
-        async with Client(transport, mode="legacy") as client:
-            tools = await client.list_tools()
-            assert {tool.name for tool in tools} == TOOLS
-            for tool in tools:
-                assert tool.output_schema and tool.output_schema.get("properties"), tool.name
-                Draft202012Validator.check_schema(tool.output_schema)
-            result = await client.call_tool("fetch", {"id": "invalid-id"}, raise_on_error=False)
-            assert result.is_error and "WOS:" in result.content[0].text
+    try:
+        with fail_after(25):
+            async with stdio_client(server) as (read, write):
+                async with ClientSession(read, write) as client:
+                    initialized = await client.initialize()
+                    assert initialized.protocol_version == "2025-11-25"
+                    tools = (await client.list_tools()).tools
+                    assert {tool.name for tool in tools} == TOOLS
+                    schemas = {}
+                    for tool in tools:
+                        assert tool.output_schema and tool.output_schema.get("properties"), (
+                            tool.name
+                        )
+                        Draft202012Validator.check_schema(tool.output_schema)
+                        schemas[tool.name] = tool.output_schema
+                    if synthetic_search:
+                        result = await client.call_tool(
+                            "search_wos", {"query": "TS=(quantum computing)"}
+                        )
+                        assert not result.is_error, result.content
+                        assert isinstance(result.content[0], TextContent)
+                        assert json.loads(result.content[0].text) == result.structured_content
+                        assert result.structured_content is not None
+                        Draft202012Validator(
+                            schemas["search_wos"], format_checker=FormatChecker()
+                        ).validate(result.structured_content)
+                        assert result.structured_content["results"][0]["id"] == "WOS:SMOKE001"
+                        error = await client.call_tool("fetch", {"id": "invalid-id"})
+                        assert error.is_error and isinstance(error.content[0], TextContent)
+                        assert "WOS:" in error.content[0].text
+    finally:
+        if transcript.is_file():
+            with transcript.open("rb") as output:
+                for line_number, line in enumerate(output, 1):
+                    try:
+                        assert line.endswith(b"\n")
+                        jsonrpc_message_adapter.validate_json(line, by_name=False)
+                    except (ValueError, AssertionError):
+                        raise AssertionError(
+                            f"Server wrote non-protocol output to stdout at line {line_number}."
+                        ) from None
+    assert completed.is_file(), "Server did not exit cleanly."
 
 
 async def smoke(directory: Path) -> None:
@@ -124,8 +165,12 @@ async def smoke(directory: Path) -> None:
                 == expected
             )
             assert run([str(console), "--version"], outside, environment) == expected
-            await discovery(str(python), ["-m", "wos_mcp_bridge"], outside, environment)
-            await discovery(str(console), [], outside, environment)
+            launcher = outside / "smoke_stdio_server.py"
+            shutil.copyfile(ROOT / "scripts" / launcher.name, launcher)
+            await exercise_stdio(
+                python, [str(python), "-I", str(launcher)], outside, synthetic_search=True
+            )
+            await exercise_stdio(python, [str(console)], outside)
             print(
                 f"PASS: {artifact.name}: installed import, module/console version and stdio",
                 flush=True,

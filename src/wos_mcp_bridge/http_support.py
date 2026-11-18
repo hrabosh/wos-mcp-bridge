@@ -110,7 +110,9 @@ class RequestPolicy:
 
 def retry_after(value: str | None, *, now: datetime | None = None) -> float:
     """Retry-After seconds/date, with a conservative default and one-hour cap."""
-    if value is not None and value.isascii() and value.isdigit():
+    if value is None:
+        return 60
+    if value.isascii() and value.isdigit():
         digits = value.lstrip("0") or "0"
         return 3600 if len(digits) > 4 else min(int(digits), 3600)
     try:
