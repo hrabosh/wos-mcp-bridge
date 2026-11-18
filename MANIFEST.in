@@ -1,0 +1,10 @@
+include README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md LICENSE NOTICE pyproject.toml MANIFEST.in server.py
+include uv.lock requirements.txt requirements-dev.txt
+recursive-include src/wos_mcp_bridge *.py
+recursive-include tests *.py
+recursive-include scripts *.py
+recursive-include docs *.md
+prune docs/superpowers
+prune .superpowers
+prune .github
+global-exclude *.py[cod] .env .env.*

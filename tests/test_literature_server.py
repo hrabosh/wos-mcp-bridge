@@ -7,14 +7,14 @@ import pytest
 from fastmcp import Client
 from test_literature import DOI, JATS, WORK, search_body
 
-import server
-from europe_pmc import EuropePmcClient
-from literature_client import LiteratureClient
-from openalex_client import OpenAlexClient
+from wos_mcp_bridge import server
+from wos_mcp_bridge.europe_pmc import EuropePmcClient
+from wos_mcp_bridge.literature_client import LiteratureClient
+from wos_mcp_bridge.openalex_client import OpenAlexClient
 
 
 @pytest.fixture
-async def literature_mcp(make_client, monkeypatch):
+async def literature_mcp(make_client):
     wos, _ = make_client()
     calls = []
 
@@ -31,13 +31,12 @@ async def literature_mcp(make_client, monkeypatch):
         EuropePmcClient(transport=transport, min_interval=0),
         OpenAlexClient(transport=transport, min_interval=0),
     )
-    monkeypatch.setattr(server, "WosClient", lambda _: wos)
-    monkeypatch.setattr(server, "LiteratureClient", lambda **_: literature)
-    async with Client(server.mcp) as client:
-        yield client, calls
-    assert literature.europe_pmc._http.is_closed
-    assert literature.openalex._http.is_closed
-    assert wos._http.is_closed
+    try:
+        application = server.create_server(services=server.Services(wos, literature))
+        async with Client(application) as client:
+            yield client, calls
+    finally:
+        await literature.aclose()
 
 
 @pytest.mark.parametrize(

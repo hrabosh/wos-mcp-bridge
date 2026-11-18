@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import re
+from typing import Unpack
 from urllib.parse import urlsplit
 
-from article_xml import extract_jats, plain_text, validate_text
-from literature_http import ApiClient, JsonObject, LiteratureError
+from pydantic import ValidationError
+
+from .article_xml import extract_jats, plain_text, validate_text
+from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
+from .models import ArticleRecord, Bibliography, JatsContent, LiteraturePage
 
 
-def identifier(value: str) -> tuple[str, str]:
+def identifier(value: object) -> tuple[str, str]:
     value = validate_text(value, "identifier", 512)
     value = re.sub(r"^(?:https://(?:dx\.)?doi\.org/|doi:)", "", value, flags=re.I)
     if re.fullmatch(r"10\.\d{4,9}/[^\s\"<>\\]+", value, flags=re.I):
@@ -51,6 +55,9 @@ def _optional_id(value: object, kind: str) -> str | None:
 def normalise(hit: object) -> JsonObject:
     if not isinstance(hit, dict) or not isinstance(hit.get("title"), str):
         raise LiteratureError("Europe PMC returned malformed article metadata.")
+    title = plain_text(hit["title"])
+    if not title:
+        raise LiteratureError("Europe PMC returned an article without a valid title.")
     doi = _optional_id(hit.get("doi"), "doi")
     pmcid = _optional_id(hit.get("pmcid"), "pmcid")
     pmid = _optional_id(hit.get("id"), "pmid") if hit.get("source") == "MED" else None
@@ -84,9 +91,9 @@ def normalise(hit: object) -> JsonObject:
                 if link_url := safe_url(link.get("url")):
                     locations.append({"url": link_url, "license": None, "source": "Europe PMC"})
     license_value = hit.get("license") if isinstance(hit.get("license"), str) else None
-    return {
+    record = {
         "id": record_key,
-        "title": plain_text(hit["title"]),
+        "title": title,
         "doi": doi,
         "pmid": pmid,
         "pmcid": pmcid,
@@ -106,17 +113,60 @@ def normalise(hit: object) -> JsonObject:
         "warnings": [],
     }
 
+    try:
+        journal_info = hit.get("journalInfo")
+        if journal_info is not None and not isinstance(journal_info, dict):
+            raise LiteratureError("Europe PMC returned malformed journal metadata.")
+        journal = journal_info.get("journal") if journal_info is not None else None
+        if journal is not None and not isinstance(journal, dict):
+            raise LiteratureError("Europe PMC returned malformed journal metadata.")
+        record["bibliography"] = Bibliography.from_metadata(
+            authors=_author_names(hit.get("authorList")),
+            year=record["year"],
+            journal=journal.get("title") if journal is not None else None,
+        ).model_dump(mode="json")
+        return ArticleRecord.model_validate(record).model_dump(mode="json", exclude_unset=True)
+    except ValidationError:
+        raise LiteratureError("Europe PMC returned malformed bibliographic metadata.") from None
 
-class EuropePmcClient(ApiClient):
-    def __init__(self, **kwargs) -> None:
-        super().__init__("Europe PMC", **kwargs)
+
+def _author_names(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("author"), list):
+        raise LiteratureError("Europe PMC returned malformed author metadata.")
+    names: list[str] = []
+    complete = True
+    for author in value["author"]:
+        if not isinstance(author, dict):
+            raise LiteratureError("Europe PMC returned malformed author metadata.")
+        name = author.get("fullName")
+        if name is None:
+            name = author.get("collectiveName")
+        if name is None:
+            complete = False
+            continue
+        if not isinstance(name, str):
+            raise LiteratureError("Europe PMC returned malformed author metadata.")
+        names.append(name)
+    return names if complete else None
+
+
+class EuropePmcClient:
+    """Europe PMC endpoint validation composed with a fixed-host transport."""
+
+    def __init__(self, **options: Unpack[ApiOptions]) -> None:
+        self._api = ApiClient("Europe PMC", **options)
+
+    async def aclose(self) -> None:
+        await self._api.aclose()
 
     async def search(self, query: str, limit: int = 10, cursor: str = "*") -> JsonObject:
         query = validate_text(query, "query", 4000)
         cursor = validate_text(cursor, "cursor", 2048)
         if type(limit) is not int or not 1 <= limit <= 50:
             raise LiteratureError("limit must be an integer from 1 to 50.")
-        data, retrieval = await self._json(
+        data, retrieval = await self._api.get_json(
             "search",
             {
                 "query": query,
@@ -125,7 +175,12 @@ class EuropePmcClient(ApiClient):
                 "pageSize": limit,
                 "cursorMark": cursor,
             },
+            parse=lambda data: self._parse_search(data, limit),
         )
+        return {"query": query, "cursor": cursor, **data, "retrieval": retrieval}
+
+    @staticmethod
+    def _parse_search(data: JsonObject, limit: int) -> JsonObject:
         results = data.get("resultList")
         if (
             not isinstance(results, dict)
@@ -135,14 +190,16 @@ class EuropePmcClient(ApiClient):
         ):
             raise LiteratureError("Europe PMC returned malformed search results.")
         next_cursor = data.get("nextCursorMark")
-        return {
-            "query": query,
-            "total": data["hitCount"],
-            "cursor": cursor,
-            "next_cursor": next_cursor if isinstance(next_cursor, str) else None,
-            "results": [normalise(hit) for hit in results["result"][:limit]],
-            "retrieval": retrieval,
-        }
+        try:
+            return LiteraturePage.model_validate(
+                {
+                    "total": data["hitCount"],
+                    "next_cursor": next_cursor,
+                    "results": [normalise(hit) for hit in results["result"][:limit]],
+                }
+            ).model_dump(mode="json", exclude_unset=True)
+        except ValidationError:
+            raise LiteratureError("Europe PMC returned malformed search pagination.") from None
 
     async def resolve(self, value: str) -> JsonObject:
         kind, key = identifier(value)
@@ -170,5 +227,16 @@ class EuropePmcClient(ApiClient):
         kind, key = identifier(pmcid)
         if kind != "pmcid":
             raise LiteratureError("Full text XML requires a PMCID.")
-        raw, retrieval = await self._get(f"{key}/fullTextXML")
-        return {**extract_jats(raw, expected_pmcid=key), "retrieval": retrieval}
+        data, retrieval = await self._api.get(
+            f"{key}/fullTextXML", parse=lambda raw: self._parse_full_text(raw, key)
+        )
+        return {**data, "retrieval": retrieval}
+
+    @staticmethod
+    def _parse_full_text(raw: bytes, pmcid: str) -> JsonObject:
+        content = extract_jats(raw, expected_pmcid=pmcid)
+        content["license_url"] = safe_url(content["license_url"])
+        try:
+            return JatsContent.model_validate(content).model_dump(mode="json", exclude_unset=True)
+        except ValidationError:
+            raise LiteratureError("Europe PMC returned malformed article sections.") from None

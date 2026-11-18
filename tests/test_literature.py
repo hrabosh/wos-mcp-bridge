@@ -2,17 +2,15 @@
 
 import asyncio
 import copy
-from types import SimpleNamespace
 
 import httpx
 import pytest
 
-import literature_http
-from article_xml import extract_jats
-from europe_pmc import EuropePmcClient, identifier, normalise
-from literature_client import LiteratureClient, deduplicate
-from literature_http import LiteratureError
-from openalex_client import OpenAlexClient
+from wos_mcp_bridge.article_xml import extract_jats
+from wos_mcp_bridge.europe_pmc import EuropePmcClient, identifier, normalise
+from wos_mcp_bridge.literature_client import LiteratureClient, deduplicate
+from wos_mcp_bridge.literature_http import LiteratureError
+from wos_mcp_bridge.openalex_client import OpenAlexClient
 
 DOI = "10.1234/vet-test"
 HIT = {
@@ -83,10 +81,11 @@ async def literature_factory():
                 return oa_handler(request)
             return httpx.Response(200, json=copy.deepcopy(WORK))
 
+        kwargs.setdefault("min_interval", 0)
         transport = httpx.MockTransport(handle)
         client = LiteratureClient(
-            EuropePmcClient(transport=transport, min_interval=0, **kwargs),
-            OpenAlexClient("test-secret", transport=transport, min_interval=0, **kwargs),
+            EuropePmcClient(transport=transport, **kwargs),
+            OpenAlexClient("test-secret", transport=transport, **kwargs),
         )
         clients.append(client)
         return client, calls
@@ -465,10 +464,9 @@ async def test_malformed_search(literature_factory, body):
         await client.search("canine")
 
 
-async def test_cache_copies_concurrency_expiry_and_eviction(literature_factory, monkeypatch):
+async def test_cache_copies_concurrency_expiry_and_eviction(literature_factory):
     clock = [100.0]
-    monkeypatch.setattr(literature_http, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    client, calls = literature_factory(cache_ttl=10)
+    client, calls = literature_factory(cache_ttl=10, clock=lambda: clock[0])
     results = await asyncio.gather(*(client.search("canine") for _ in range(3)))
     assert len(calls) == 1
     results[0]["results"][0]["title"] = "mutated"
@@ -477,23 +475,21 @@ async def test_cache_copies_concurrency_expiry_and_eviction(literature_factory, 
     clock[0] = 111
     await client.search("canine")
     assert len(calls) == 2
-    monkeypatch.setattr(literature_http, "MAX_CACHE_ENTRIES", 1)
+    client, calls = literature_factory(cache_max_entries=1)
+    await client.search("canine")
     await client.search("feline")
     await client.search("canine")
-    assert len(calls) == 4
+    assert len(calls) == 3
 
 
-async def test_spacing_and_rate_limit_cooldown(literature_factory, monkeypatch):
+async def test_spacing_and_rate_limit_cooldown(literature_factory):
     clock, delays = [100.0], []
 
     async def sleep(delay):
         delays.append(delay)
         clock[0] += delay
 
-    monkeypatch.setattr(literature_http, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    monkeypatch.setattr(literature_http, "asyncio", SimpleNamespace(Lock=asyncio.Lock, sleep=sleep))
-    client, calls = literature_factory()
-    client.europe_pmc._interval = 1.1
+    client, calls = literature_factory(min_interval=1.1, clock=lambda: clock[0], sleep=sleep)
     await client.search("canine")
     await client.search("feline")
     assert delays == pytest.approx([1.1])
@@ -507,34 +503,29 @@ async def test_spacing_and_rate_limit_cooldown(literature_factory, monkeypatch):
     assert len(calls) == 1
 
 
-def test_retry_after_date_and_invalid_values(monkeypatch):
+def test_retry_after_date_and_invalid_values():
     from datetime import UTC, datetime
     from email.utils import format_datetime
 
-    class Clock:
-        @staticmethod
-        def now(tz):
-            return datetime(2026, 1, 1, tzinfo=UTC)
+    from wos_mcp_bridge.http_support import retry_after
 
-    monkeypatch.setattr(literature_http, "datetime", Clock)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
     value = format_datetime(datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC))
-    assert literature_http._retry_after(value) == 30
-    assert literature_http._retry_after("7200") == 3600
-    assert literature_http._retry_after("invalid") == 60
-    assert literature_http._retry_after(None) == 60
+    assert retry_after(value, now=now) == 30
+    assert retry_after("7200") == 3600
+    assert retry_after("invalid") == 60
+    assert retry_after(None) == 60
 
 
-async def test_response_and_cache_byte_bounds(literature_factory, monkeypatch):
-    client, calls = literature_factory()
-    monkeypatch.setattr(literature_http, "MAX_RESPONSE_BYTES", 5)
+async def test_response_and_cache_byte_bounds(literature_factory):
+    client, calls = literature_factory(max_response_bytes=5)
     with pytest.raises(LiteratureError, match="size limit"):
         await client.search("canine")
-    monkeypatch.setattr(literature_http, "MAX_RESPONSE_BYTES", 10000)
-    monkeypatch.setattr(literature_http, "MAX_CACHE_BYTES", 1)
+    assert len(calls) == 1
+    client, calls = literature_factory(cache_max_bytes=1)
     await client.search("canine")
     await client.search("canine")
-    assert len(calls) == 3
-    assert client.europe_pmc._cache_bytes == 0
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize(

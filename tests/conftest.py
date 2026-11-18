@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from wos_client import WosClient
+from wos_mcp_bridge.wos_client import WosClient
 
 HIT = {
     "uid": "WOS:TEST001",

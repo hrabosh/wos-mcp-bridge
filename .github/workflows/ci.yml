@@ -12,20 +12,39 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ['3.12', '3.14']
+    env:
+      FASTMCP_CHECK_FOR_UPDATES: "off"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
           cache: pip
-          cache-dependency-path: 'requirements*.txt'
-      - name: Install dependencies
-        run: python -m pip install -r requirements-dev.txt
+          cache-dependency-path: uv.lock
+      - name: Install uv
+        run: python -m pip install uv==0.13.9
+      - name: Install locked dependencies
+        run: uv sync --locked --python ${{ matrix.python }}
+      - name: Check generated pip exports
+        if: matrix.python == '3.12'
+        run: |
+          git ls-files --error-unmatch requirements.txt requirements-dev.txt > /dev/null
+          uv export --locked --no-dev --no-emit-project --no-hashes --output-file requirements.txt > /dev/null
+          uv export --locked --no-emit-project --no-hashes --output-file requirements-dev.txt > /dev/null
+          git diff --exit-code -- requirements.txt requirements-dev.txt
       - name: Lint
-        run: python -m ruff check .
+        if: matrix.python == '3.12'
+        run: uv run --locked python -m ruff check .
       - name: Check formatting
-        run: python -m ruff format --check --diff .
+        if: matrix.python == '3.12'
+        run: uv run --locked python -m ruff format --check --diff .
+      - name: Check production types
+        if: matrix.python == '3.12'
+        run: uv run --locked ty check --error-on-warning
       - name: Run offline unit and MCP tests
-        run: python -m pytest -q
+        run: uv run --locked --python ${{ matrix.python }} python -m pytest -q

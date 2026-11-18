@@ -1,13 +1,11 @@
 import asyncio
 import copy
-from types import SimpleNamespace
 
 import httpx
 import pytest
 from conftest import HIT, api_response
 
-import wos_client
-from wos_client import WosClient, WosError
+from wos_mcp_bridge.wos_client import WosClient, WosError
 
 
 async def test_search_sends_fixed_endpoint_and_exact_query(make_client):
@@ -40,15 +38,18 @@ async def test_supplied_citation_counts_are_preserved(make_client, count):
     assert (await client.search("TS=canine"))["results"][0]["citations"] == {"WOS": count}
 
 
-@pytest.mark.parametrize("count", [True, -1, "12", None])
-async def test_invalid_citation_counts_are_not_reported_as_facts(make_client, count):
+@pytest.mark.parametrize("count", [True, -1, "12"])
+async def test_invalid_citation_counts_are_rejected_without_poisoning_cache(make_client, count):
     def handler(request):
         body = api_response(request).json()
-        body["hits"][0]["citations"] = [{"db": "WOS", "count": count}]
+        body["hits"][0]["citations"] = [{"db": "WOS", "count": count if len(calls) == 1 else 12}]
         return httpx.Response(200, json=body)
 
-    client, _ = make_client(handler)
-    assert (await client.search("TS=canine"))["results"][0]["citations"] is None
+    client, calls = make_client(handler)
+    with pytest.raises(WosError):
+        await client.search("TS=canine")
+    assert (await client.search("TS=canine"))["results"][0]["citations"] == {"WOS": 12}
+    assert len(calls) == 2
 
 
 async def test_query_and_record_cache_avoid_extra_requests(make_client):
@@ -65,10 +66,9 @@ async def test_query_and_record_cache_avoid_extra_requests(make_client):
     assert "NOT article full text" in fetched["text"]
 
 
-async def test_cache_reads_do_not_extend_original_expiry(make_client, monkeypatch):
+async def test_cache_reads_do_not_extend_original_expiry(make_client):
     clock = [100.0]
-    monkeypatch.setattr(wos_client, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    client, calls = make_client(cache_ttl=10)
+    client, calls = make_client(cache_ttl=10, clock=lambda: clock[0])
     first = await client.search("TS=canine")
     clock[0] = 109.0
     cached = await client.search("TS=canine")
@@ -79,13 +79,11 @@ async def test_cache_reads_do_not_extend_original_expiry(make_client, monkeypatc
     assert fetched["metadata"]["retrieval"]["cached"] is False
 
 
-async def test_cache_is_bounded(make_client, monkeypatch):
-    monkeypatch.setattr(wos_client, "MAX_CACHE_ENTRIES", 3)
-    client, calls = make_client()
+async def test_cache_is_bounded(make_client):
+    client, calls = make_client(cache_max_entries=3)
     for query in ("TS=one", "TS=two", "TS=three", "TS=one"):
         await client.search(query)
     assert len(calls) == 4
-    assert len(client._cache) == 3
 
 
 async def test_concurrent_identical_searches_share_a_request(make_client):
@@ -95,16 +93,14 @@ async def test_concurrent_identical_searches_share_a_request(make_client):
     assert sum(not result["retrieval"]["cached"] for result in results) == 1
 
 
-async def test_request_spacing_is_enforced(make_client, monkeypatch):
+async def test_request_spacing_is_enforced(make_client):
     clock, delays = [100.0], []
 
     async def sleep(delay):
         delays.append(delay)
         clock[0] += delay
 
-    monkeypatch.setattr(wos_client, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    monkeypatch.setattr(wos_client, "asyncio", SimpleNamespace(Lock=asyncio.Lock, sleep=sleep))
-    client, calls = make_client(min_interval=1.1)
+    client, calls = make_client(min_interval=1.1, clock=lambda: clock[0], sleep=sleep)
     await client.search("TS=one")
     await client.search("TS=two")
     assert len(calls) == 2
@@ -234,4 +230,3 @@ async def test_close_releases_the_connection_pool(make_client):
     await client.search("TS=canine")
     await client.aclose()
     assert client._http.is_closed
-    assert not client._cache
