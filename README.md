@@ -108,8 +108,10 @@ For a managed deployment, use a host that supplies **HTTPS and MCP-compatible OA
 1. Connect this repository to the host; grant access only to the repositories it needs.
 2. Select branch `main` and entrypoint **`server.py:mcp`**.
 3. Use **Python 3.12 or newer** and install the project with **`python -m pip install .`**.
-   This installs the package and its pinned runtime dependencies. Existing deployments
-   that only installed `requirements.txt` must add this project-install step.
+   This installs the package and resolves its supported dependency ranges. For a
+   reproducible deployment, install the generated `requirements.txt` first, then
+   `python -m pip install --no-deps .`. Existing deployments that only installed
+   `requirements.txt` must add this project-install step.
 4. Add **`WOS_API_KEY`** in the host's secret environment settings.
 5. **Enable authentication** and restrict access to your own account/organization.
 6. Deploy and copy the MCP URL supplied by the host.
@@ -149,17 +151,20 @@ connection is working. None of those external systems are configured by a Git pu
 
 ## Local development
 
-Python **3.12 or newer**:
+Python **3.12 or newer**, with uv **0.13.9**:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
-python -m pip install --no-deps -e .
-python -m pytest -q
-python -m ruff check .
-python -m ruff format --check .
+uv sync --locked --python 3.12
+uv run --locked python -m pytest -q
+uv run --locked python -m ruff check .
+uv run --locked python -m ruff format --check .
+uv run --locked wos-mcp-bridge --version
 ```
+
+`pyproject.toml` declares dependency intent; `uv.lock` records the tested resolution.
+The requirements files are generated pip compatibility exports. See
+[packaging and releases](docs/releasing.md) for pip setup, deployment, dependency
+updates, wheel/source checks, pipx and the publication checklist.
 
 Tests need no real API key and make no Clarivate requests. They cover validation,
 serialization, unknown versus zero citations, cache expiry and eviction, concurrent
@@ -296,6 +301,13 @@ moved under `wos_mcp_bridge`; direct integrations must update their imports.
 | Clarivate 429 | Stop requests and check the daily/per-second quota; do not repeatedly retry. |
 | OAuth/discovery fails | Check the MCP URL, entrypoint, and hosting access controls; do not disable authentication. |
 | No abstract or citation count | This can be an API/plan limitation, not evidence that the paper lacks an abstract or citations. |
+
+## License
+
+The program is licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE).
+Provider metadata, article text and API access remain subject to their own terms.
+Packaging and release automation are prepared locally; this is not an announcement
+of a published PyPI package or hosted service.
 
 ## References
 

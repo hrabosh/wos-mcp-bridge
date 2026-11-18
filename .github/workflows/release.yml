@@ -1,0 +1,89 @@
+name: Release artifacts
+
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish checked artifacts from this version tag to PyPI
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FASTMCP_CHECK_FOR_UPDATES: "off"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: uv.lock
+      - name: Check publication request
+        env:
+          PUBLISH_REQUESTED: ${{ inputs.publish || false }}
+        run: |
+          if [ "$PUBLISH_REQUESTED" = true ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo 'Publication requires an explicit version tag.' >&2
+            exit 1
+          fi
+      - name: Install locked tooling and project
+        run: |
+          python -m pip install uv==0.13.9
+          uv sync --locked --python 3.12
+      - name: Verify generated pip exports
+        run: |
+          uv export --locked --no-dev --no-emit-project --no-hashes --output-file requirements.txt > /dev/null
+          uv export --locked --no-emit-project --no-hashes --output-file requirements-dev.txt > /dev/null
+          git diff --exit-code -- requirements.txt requirements-dev.txt
+      - name: Verify source
+        run: |
+          uv run --locked python -m ruff check .
+          uv run --locked python -m ruff format --check .
+          uv run --locked python -m pytest -q
+      - name: Build and check distributions
+        run: |
+          uv build --no-sources
+          uv run --locked python -m twine check --strict dist/*.whl dist/*.tar.gz
+          uv run --locked python scripts/check_dist.py dist
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            uv run --locked python scripts/check_dist.py dist --tag "${GITHUB_REF#refs/tags/}"
+          fi
+      - name: Install and exercise wheel and source distribution
+        run: uv run --locked python scripts/smoke_dist.py dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/wos-mcp-bridge
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-distributions
+          path: dist
+      - name: Publish checked artifacts using Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
