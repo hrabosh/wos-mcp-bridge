@@ -125,16 +125,20 @@ works before a PyPI release; it does not imply that a public package exists.
 
 ## First public release checklist
 
-- Finish the remaining open-source readiness items in #11: public documentation,
-  contribution/security reporting, content/history review and release notes.
-  Apache-2.0 was approved by the owner; LICENSE, NOTICE and package metadata agree.
-  This licenses the code, not Clarivate/Europe PMC/OpenAlex data or article text.
+- Review the README, release notes, contribution guide and security policy.
+  Confirm the GitHub **Report a vulnerability** form is available and reaches a
+  maintainer. Scan the exact release source and all reachable history for
+  credentials and review stored fixtures. Revoke any confirmed exposed
+  credential at its provider. Check that LICENSE, NOTICE and package metadata
+  agree on Apache-2.0. Provider data and article text carry separate terms.
 - Confirm ownership and availability of `wos-mcp-bridge` on PyPI immediately before
   release. The JSON API returned 404 on 2026-11-18; this was only a dated lookup,
   not a reservation or approval to publish. Rename metadata/entrypoints/docs together
   if the name cannot be used.
-- Set the release version once in `pyproject.toml`, refresh the lock and exports,
-  and move the relevant Unreleased changelog entries into that version's section.
+- Set the release version in `pyproject.toml`, refresh the lock and exports,
+  and replace the release-candidate heading in the changelog with the released
+  version and date. Check that the README describes the published installation
+  path only after the package is available.
 - Complete review, the offline suite and all artifact checks. Record the commit,
   interpreter, lock, workflow result and artifact hashes with the release notes.
 - Before enabling publication, create the GitHub `pypi` environment with required

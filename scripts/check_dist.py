@@ -22,6 +22,8 @@ SOURCE_FILES = {
     "MANIFEST.in",
     "README.md",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "LICENSE",
     "NOTICE",
     "uv.lock",

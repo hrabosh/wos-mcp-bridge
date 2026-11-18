@@ -1,15 +1,29 @@
 # Changelog
 
-No public release has been published by this refactoring work.
+## 0.1.0 release candidate
 
-## Unreleased
+This entry describes the first planned public package release. The package and
+CLI report version `0.1.0`. Use the [release guide](docs/releasing.md) to verify
+the built artifacts.
 
-- Package the seven read-only WoS, Europe PMC and OpenAlex MCP tools with module
-  and console entrypoints; retain the source hosting entrypoint `server.py:mcp`.
-- Separate application composition, resource ownership, provider clients and MCP adapters.
-- Publish validated input/output contracts and common bibliography while preserving
-  legacy fields, missing-versus-zero counts and bounded text semantics.
-- Validate provider responses before caching, honor rate-limit cooldowns and preserve
-  cancellation/cleanup behavior with bounded response and cache sizes.
-- Add reproducible dependency resolution, distribution checks and release preparation.
-- License the program under Apache-2.0; provider data retains its own terms.
+- Package seven read-only MCP tools for WoS, Europe PMC and OpenAlex. The
+  application factory owns client startup, cleanup and provider configuration.
+- Publish input and output schemas. Detailed records add common bibliography
+  while preserving legacy fields, unknown citation counts and text limits.
+- Honor upstream cooldowns, validate responses before caching, and isolate
+  provider caches and request limits. Cache hits can complete while another
+  request waits on a provider.
+- Verify Python 3.12 and 3.14, type checks and installed stdio. The wheel and
+  source distribution are checked outside the repository.
+- License the program under Apache-2.0. Add a synthetic offline demo and
+  document provider entitlements, data rights and operational limits.
+
+### Migrate from a source checkout
+
+Install the package before running the CLI or importing `server.py:mcp` on a
+managed host. Use `uv sync --locked --no-dev` for the locked environment or
+follow the [pip installation steps](docs/releasing.md#development-and-deployment).
+The hosted compatibility entrypoint remains `server.py:mcp`. Use
+`python -m wos_mcp_bridge` or `wos-mcp-bridge` for stdio. Python integrations
+that imported the old root modules should import from `wos_mcp_bridge` instead.
+The [contract guide](docs/contracts.md) describes the MCP response fields.
