@@ -2,7 +2,7 @@
 
 The version, runtime dependency ranges, development dependencies, URLs and license
 are declared in `pyproject.toml`. The build backend is setuptools 84.2.1; uv 0.13.9
-resolves and runs the development/deployment environment. `uv.lock` records exact
+resolves and runs the CI and release environment. `uv.lock` records exact
 transitive versions, markers and artifact hashes. The tested lock uses
 FastMCP 4.1.7 and MCP Python SDK 2.3.0.
 
@@ -41,6 +41,10 @@ checkout after installing the generated runtime dependencies:
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+FastMCP Gateway uses its bundled uv to install this export. The
+requirements-only installation and entrypoint were verified with uv 0.13.7 in
+a clean Python 3.12 environment.
 
 To install the package and its CLI in that same environment, then run
 `python -m pip install --no-deps .`. A regular `pip install .` or wheel installation
