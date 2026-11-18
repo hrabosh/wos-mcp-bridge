@@ -20,10 +20,10 @@ the built artifacts.
 
 ### Migrate from a source checkout
 
-Install the package before running the CLI or importing `server.py:mcp` on a
-managed host. Use `uv sync --locked --no-dev` for the locked environment or
-follow the [pip installation steps](docs/releasing.md#development-and-deployment).
-The hosted compatibility entrypoint remains `server.py:mcp`. Use
+Managed hosts can keep loading `server.py:mcp` after installing the runtime
+requirements. To use the installed module or console command, run
+`uv sync --locked --no-dev` or follow the
+[pip installation steps](docs/releasing.md#development-and-deployment). Use
 `python -m wos_mcp_bridge` or `wos-mcp-bridge` for stdio. Python integrations
 that imported the old root modules should import from `wos_mcp_bridge` instead.
 The [contract guide](docs/contracts.md) describes the MCP response fields.

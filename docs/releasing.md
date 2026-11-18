@@ -34,18 +34,17 @@ uv run --locked --no-dev wos-mcp-bridge
 ```
 
 The latter starts stdio and needs `WOS_API_KEY`. It does not open an HTTP endpoint.
-Managed hosting keeps `server.py:mcp`. For a pip-based host, install the generated
-runtime dependencies first, then the package:
+Managed hosting keeps `server.py:mcp`. A pip-based host can load it from a
+checkout after installing the generated runtime dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
-python -m pip install --no-deps .
 ```
 
-Installing `requirements.txt` alone does not install the server package. A regular
-`pip install .` or wheel installation instead resolves the package's declared
-ranges. `requirements-dev.txt` is the corresponding generated development export;
-install the project with `python -m pip install --no-deps -e .` after that export.
+To install the package and its CLI in that same environment, then run
+`python -m pip install --no-deps .`. A regular `pip install .` or wheel installation
+resolves the package's declared dependency ranges. For development with pip,
+install `requirements-dev.txt` and then run `python -m pip install --no-deps -e .`.
 
 ## Updating dependencies
 
@@ -100,7 +99,9 @@ metadata/license files.
 
 The smoke check creates separate temporary environments outside the checkout,
 installs the locked runtime dependencies, and installs each wheel/source artifact
-without re-resolving its dependencies. It verifies installed package location,
+without re-resolving its dependencies. It also loads `server.py:mcp` from a
+separate working directory in an environment containing only runtime
+requirements. It verifies installed package location,
 credential-free module/console versions, import without constructing HTTP clients,
 and stdio discovery of all seven output schemas. The MCP SDK negotiates protocol
 revision `2025-11-25` in the initialize handshake. A synthetic HTTP response

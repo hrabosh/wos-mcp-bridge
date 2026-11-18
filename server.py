@@ -1,9 +1,16 @@
-"""Compatibility entrypoint for existing server.py:mcp hosting configurations.
+"""Compatibility entrypoint for hosts that load server.py:mcp from a checkout."""
 
-Install this project (pip install -e . for development) before importing it.
-"""
+import sys
+from pathlib import Path
 
-from wos_mcp_bridge.server import mcp
+try:
+    from wos_mcp_bridge.server import mcp
+except ModuleNotFoundError as error:
+    if error.name != "wos_mcp_bridge":
+        raise
+    # Some hosts install the runtime requirements and load this file directly.
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+    from wos_mcp_bridge.server import mcp
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

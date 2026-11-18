@@ -90,15 +90,14 @@ warning. No retries or automatic extra pages are made.
 ## Deploy from this repository
 
 For a managed deployment, use a host that supplies **HTTPS and MCP-compatible OAuth**.
-[Prefect Horizon](https://gofastmcp.com/deployment/prefect-horizon) supports this setup.
+[FastMCP Gateway](https://gofastmcp.com/docs/deployment/fastmcp-gateway) supports this setup.
 
 1. Connect this repository to the host using a scoped repository grant.
 2. Select branch `main` and entrypoint **`server.py:mcp`**.
-3. Use **Python 3.12 or newer** and install the project with **`python -m pip install .`**.
-   This installs the package and resolves its supported dependency ranges. For a
-   reproducible deployment, install the generated `requirements.txt` first, then
-   `python -m pip install --no-deps .`. Existing deployments that only installed
-   `requirements.txt` must add this project-install step.
+3. Use **Python 3.12 or newer**. Install the generated `requirements.txt` for a
+   locked checkout deployment. The entrypoint can load the package from this
+   checkout after its runtime dependencies are available. Hosts that install the
+   project can also use `python -m pip install .`.
 4. Add **`WOS_API_KEY`** in the host's secret environment settings.
 5. **Enable authentication** and restrict access to your own account/organization.
 6. Deploy and copy the MCP URL supplied by the host.

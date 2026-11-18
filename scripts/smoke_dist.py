@@ -131,6 +131,23 @@ async def smoke(directory: Path) -> None:
                 outside,
                 environment,
             )
+            if artifact.suffix == ".whl":
+                # Existing hosts install only runtime requirements before loading server.py:mcp.
+                result = run(
+                    [
+                        str(python),
+                        "-I",
+                        "-c",
+                        "import importlib.util, runpy, sys; "
+                        "assert importlib.util.find_spec('wos_mcp_bridge') is None; "
+                        "print(runpy.run_path(sys.argv[1])['mcp'].name)",
+                        str(ROOT / "server.py"),
+                    ],
+                    outside,
+                    environment,
+                )
+                assert result == "Web of Science", result
+                print("PASS: server.py:mcp loads with only runtime requirements", flush=True)
             run(
                 [
                     uv,

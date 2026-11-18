@@ -49,10 +49,11 @@ between WoS and Europe PMC query syntax. A DI container, repository layer or eve
 would add lifecycle and extension mechanisms without current consumers. We use ordinary
 constructors, concrete types and standard-library context managers instead.
 
-The `src` layout requires installing the project. Existing `server.py:mcp` hosting remains
-supported after adding `pip install .`; direct imports of old internal modules must migrate.
-Minimal build metadata and a stdio command are included because the layout requires them;
-public release automation, licensing and complete output schemas remain separate issues.
+Installing the project makes the `src` package importable for the module and
+console commands. Hosts may also load `server.py:mcp` from a checkout after
+installing its runtime requirements. The compatibility entrypoint uses the
+checkout's `src` directory when the installed package is absent. Direct imports
+of old internal modules must migrate to `wos_mcp_bridge`.
 
 Parsed endpoint results are cached to validate once before storing. This also avoids
 reparsing a cached JATS response, but it is not a cross-identifier article cache: resolving
