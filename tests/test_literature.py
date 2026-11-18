@@ -6,6 +6,7 @@ import copy
 import httpx
 import pytest
 
+from wos_mcp_bridge import europe_pmc, literature_client
 from wos_mcp_bridge.article_xml import extract_jats
 from wos_mcp_bridge.europe_pmc import EuropePmcClient, identifier, normalise
 from wos_mcp_bridge.literature_client import LiteratureClient, deduplicate
@@ -65,7 +66,7 @@ def search_body(records=None):
 async def literature_factory():
     clients = []
 
-    def factory(epmc_handler=None, oa_handler=None, **kwargs):
+    def factory(epmc_handler=None, oa_handler=None, *, api_key="test-secret", **kwargs):
         calls = []
 
         def handle(request):
@@ -85,7 +86,7 @@ async def literature_factory():
         transport = httpx.MockTransport(handle)
         client = LiteratureClient(
             EuropePmcClient(transport=transport, **kwargs),
-            OpenAlexClient("test-secret", transport=transport, **kwargs),
+            OpenAlexClient(api_key, transport=transport, **kwargs),
         )
         clients.append(client)
         return client, calls
@@ -93,6 +94,29 @@ async def literature_factory():
     yield factory
     for client in clients:
         await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("records", "next_cursor", "expected"),
+    [
+        ([HIT], None, None),
+        ([], "unused-token", None),
+        ([HIT], "current-token", None),
+        ([HIT], "new-token", "new-token"),
+    ],
+)
+async def test_search_terminal_cursor(literature_factory, records, next_cursor, expected):
+    body = search_body(records)
+    body.pop("nextCursorMark")
+    if next_cursor is not None:
+        body["nextCursorMark"] = next_cursor
+    client, calls = literature_factory(lambda _: httpx.Response(200, json=body))
+
+    result = await client.search("synthetic article", cursor="current-token")
+
+    assert result["next_cursor"] == expected
+    assert len(calls) == 1
+    assert calls[0].url.params["cursorMark"] == "current-token"
 
 
 async def test_search_exact_query_cursor_and_dedup(literature_factory):
@@ -260,7 +284,7 @@ async def test_article_budget_and_section_paging(literature_factory):
     assert second["section"]["next_offset"] is None
     directory = await client.get_article(DOI, include_text=False)
     assert all("text" not in s for s in directory["sections"])
-    assert len(calls) == 4  # Two identifier queries; shared DOI OA lookup and XML cache.
+    assert len(calls) == 3  # One verified resolution, one OA lookup and one XML request.
     assert all(item["cached"] for item in directory["retrieval"])
     with pytest.raises(LiteratureError, match="Section not found"):
         await client.get_section(DOI, "invented")
@@ -538,3 +562,131 @@ async def test_response_and_cache_byte_bounds(literature_factory):
 )
 def test_identifier_normalization(value, expected):
     assert identifier(value) == expected
+
+
+async def test_normalized_article_reuses_verified_aliases_and_preserves_copies(
+    literature_factory, monkeypatch
+):
+    from unittest.mock import AsyncMock, Mock
+
+    client, calls = literature_factory()
+    parse = Mock(wraps=europe_pmc.extract_jats)
+    resolve = AsyncMock(wraps=client.openalex.resolve)
+    monkeypatch.setattr(europe_pmc, "extract_jats", parse)
+    monkeypatch.setattr(client.openalex, "resolve", resolve)
+
+    first = await client.get_section(DOI, "methods", max_chars=5)
+    assert first["section"]["text"] == "Dogs "
+    original_retrieval = copy.deepcopy(first["retrieval"])
+    first["retrieval"][0]["fetched_at_utc"] = "mutated"
+    first["bibliography"]["authors"] = ["mutated"]
+    first["access"]["content_status"] = "metadata_only"
+    first["source"].clear()
+    first["warnings"].append("mutated")
+
+    second = await client.get_section("pmid:12345", "methods", offset=5, max_chars=4)
+    assert second["section"]["text"] == "were"
+    assert second["section"]["next_offset"] == 9
+    assert second["access"]["content_status"] == "full_text"
+    assert second["source"] == ["Europe PMC", "OpenAlex"]
+    assert second["warnings"] == []
+    assert second["bibliography"]["authors"] is None
+    assert second["retrieval"] == [{**item, "cached": True} for item in original_retrieval]
+    third = await client.get_section("pmc12345", "methods", offset=9)
+    assert third["section"]["text"] == " studied."
+    assert third["section"]["next_offset"] is None
+    assert len(calls) == 3
+    resolve.assert_awaited_once()
+    parse.assert_called_once()
+
+
+async def test_normalized_article_expires_with_earliest_provider_data(literature_factory):
+    clock = [100.0]
+    client, calls = literature_factory(cache_ttl=10, clock=lambda: clock[0])
+    resolved = await client.resolve(DOI)
+    clock[0] = 106
+    first = await client.get_section(DOI, "methods")
+    assert first["retrieval"][:2] == [{**item, "cached": True} for item in resolved["retrieval"]]
+    assert first["retrieval"][-1]["cached"] is False
+    clock[0] = 109
+    saved = await client.get_section("PMC12345", "methods")
+    assert len(calls) == 3
+    assert saved["retrieval"] == [{**item, "cached": True} for item in first["retrieval"]]
+
+    clock[0] = 110
+    fresh = await client.get_section(DOI, "methods")
+    assert len(calls) == 5
+    assert [item["cached"] for item in fresh["retrieval"]] == [False, False, True]
+    assert fresh["retrieval"][-1]["fetched_at_utc"] == first["retrieval"][-1]["fetched_at_utc"]
+
+
+async def test_normalized_article_does_not_cache_partial_resolution(literature_factory):
+    attempts = 0
+
+    def openalex(_):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503) if attempts == 1 else httpx.Response(200, json=WORK)
+
+    client, calls = literature_factory(oa_handler=openalex)
+    partial = await client.get_section(DOI, "methods")
+    assert partial["warnings"]
+    assert partial["source"] == ["Europe PMC"]
+
+    full = await client.get_section(DOI, "methods")
+    assert full["warnings"] == []
+    assert full["source"] == ["Europe PMC", "OpenAlex"]
+    saved = await client.get_section("PMC12345", "methods")
+    assert saved["retrieval"] == [{**item, "cached": True} for item in full["retrieval"]]
+    assert len(calls) == 4
+
+
+async def test_normalized_article_does_not_infer_doi_from_pmcid(literature_factory):
+    def europe(request):
+        if request.url.path.endswith("fullTextXML"):
+            pmcid = request.url.path.split("/")[-2]
+            return httpx.Response(200, content=JATS.replace(b">12345<", f">{pmcid[3:]}<".encode()))
+        if request.url.params["query"].startswith("DOI:"):
+            other = {**HIT, "pmcid": "PMC99999", "id": "99999"}
+            return httpx.Response(200, json=search_body([other, HIT]))
+        return httpx.Response(200, json=search_body())
+
+    client, _ = literature_factory(europe)
+    assert (await client.get_section("PMC12345", "methods"))["pmcid"] == "PMC12345"
+    assert (await client.get_section(DOI, "methods"))["pmcid"] == "PMC99999"
+    assert (await client.get_section("PMID:12345", "methods"))["pmcid"] == "PMC12345"
+
+
+async def test_normalized_article_is_not_shared_between_credentials(literature_factory):
+    def openalex(request):
+        token = request.headers["Authorization"].split()[-1]
+        location = {
+            **WORK["best_oa_location"],
+            "pdf_url": f"https://repository.example/{token}.pdf",
+        }
+        return httpx.Response(200, json={**WORK, "best_oa_location": location})
+
+    first, _ = literature_factory(oa_handler=openalex, api_key="first")
+    second, second_calls = literature_factory(oa_handler=openalex, api_key="second")
+    article = await first.get_article(DOI)
+    assert article["oa_locations"][0]["url"] == "https://repository.example/first.pdf"
+    article = await second.get_article(DOI)
+    assert article["oa_locations"][0]["url"] == "https://repository.example/second.pdf"
+    assert len(second_calls) == 3
+
+
+@pytest.mark.parametrize("cache_ttl, article_max_bytes", [(0, 100_000), (900, 1)])
+async def test_normalized_article_honors_cache_limits(
+    literature_factory, monkeypatch, cache_ttl, article_max_bytes
+):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(literature_client, "MAX_ARTICLE_CACHE_BYTES", article_max_bytes)
+    client, calls = literature_factory(cache_ttl=cache_ttl)
+    resolve = AsyncMock(wraps=client.openalex.resolve)
+    monkeypatch.setattr(client.openalex, "resolve", resolve)
+
+    await client.get_section(DOI, "methods")
+    await client.get_section(DOI, "methods")
+    assert resolve.await_count == 2
+    assert len(calls) == (6 if cache_ttl == 0 else 3)

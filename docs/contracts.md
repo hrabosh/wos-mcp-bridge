@@ -80,6 +80,26 @@ Arbitrary URLs and WoS accession IDs are rejected as article identifiers. Format
 checks constrain accepted identifiers; they do not prove a record exists.
 Service objects, request context and API keys never appear in tool input schemas.
 
+## Tool errors
+
+A failed call returns `isError: true` and a text message. It omits
+`structuredContent` so the success schema still describes successful results.
+Expected bridge errors also include `_meta["io.github.hrabosh.wos-mcp-bridge/error"]`
+with the following fields.
+
+| Field | Meaning |
+| --- | --- |
+| `code` | Stable classification. `invalid_input`, `not_found`, `auth`, `timeout`, `rate_limited`, `invalid_response`, `upstream_unavailable`, or `upstream_error`. |
+| `source` | Origin of the error. `bridge`, `literature`, `Clarivate`, `Europe PMC`, or `OpenAlex`. |
+| `retryable` | Whether retrying later may help. The bridge never automatically retries. |
+| `upstream_status` | Upstream HTTP status when available. |
+| `retry_after_seconds` | Remaining provider cooldown in whole seconds when available. |
+
+An HTTP OAuth rejection happens before tool dispatch and uses an HTTP status.
+Literature tools may return a documented `not_found` content status when a
+completed lookup found no article. An unresolved provider failure surfaces as
+a tool error or as a warning when other sources returned usable data.
+
 ## Verification and references
 
 Contract tests validate real tool results against schemas obtained through MCP
@@ -93,3 +113,14 @@ truncated text; tests also compare both result representations.
 - [Europe PMC API reference](https://dev.europepmc.org/docs/EBI_Europe_PMC_Web_Service_Reference.pdf)
 - [OpenAlex work objects](https://docs.openalex.org/api-entities/works/work-object)
 - [FastMCP tool schemas](https://gofastmcp.com/servers/tools)
+
+### Article section cache measurement
+
+A synthetic 231,416-byte JATS article with 24 sections served 50 slices of 1,000
+characters. Across seven runs, median warm time fell from 16.76 ms to 2.78 ms.
+Both warm runs used zero upstream requests and XML parses. The cold run still
+used three provider requests and parsed the XML once. The normalized cache
+reuses validated article data and keeps the original provider retrieval times.
+Europe PMC omits the cursor at the end of pagination. The bridge also stops
+after an empty page or a cursor that repeats.
+[Europe PMC REST v6.6 release note](https://groups.google.com/a/ebi.ac.uk/g/epmc-webservices/c/yG8kMl1R3cI)

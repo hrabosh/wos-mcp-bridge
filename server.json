@@ -7,21 +7,33 @@
     "url": "https://github.com/hrabosh/wos-mcp-bridge",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "wos-mcp-bridge",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "name": "WOS_API_KEY",
-          "description": "Your Clarivate Starter API key with Web of Science Core Collection access.",
+          "name": "WOS_MCP_PROFILE",
+          "description": "Use full for seven tools with a WoS key, or literature for four literature tools.",
           "format": "string",
-          "isRequired": true,
+          "choices": [
+            "full",
+            "literature"
+          ],
+          "default": "full",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "WOS_API_KEY",
+          "description": "Clarivate Starter API key with Core Collection access. Required for the full profile.",
+          "format": "string",
+          "isRequired": false,
           "isSecret": true
         },
         {

@@ -47,6 +47,8 @@ The **synthetic result** printed by the demo is:
 
 ## Run with your WoS key
 
+Install the package from PyPI with `uv tool install wos-mcp-bridge`.
+
 Configure your MCP client to launch the installed `wos-mcp-bridge` command over
 stdio. Use the client's secret settings to pass `WOS_API_KEY` to the process.
 `OPENALEX_API_KEY` is optional. The application reads environment variables at
@@ -56,7 +58,7 @@ startup. For a local check from Bash:
 read -rsp 'Clarivate Starter API key: ' WOS_API_KEY
 echo
 export WOS_API_KEY
-uv run --locked --no-dev wos-mcp-bridge
+wos-mcp-bridge
 ```
 
 The process waits for an MCP client on stdin and stdout. You can verify the
@@ -105,7 +107,7 @@ the service boundaries and client ownership.
 
 [GitHub Actions](https://github.com/hrabosh/wos-mcp-bridge/actions) defines checks
 for Python 3.12 and 3.14, lint, type checking and installation from built artifacts.
-See the [changelog](CHANGELOG.md) for the 0.1.0 release and migration notes, and
+See the [changelog](CHANGELOG.md) for release and migration notes, and
 the [release guide](docs/releasing.md) for distribution and verification.
 
 For development setup and ordinary issues, see [Contributing](CONTRIBUTING.md).

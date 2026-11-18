@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-18
 
 - Add authenticated Streamable HTTP, OAuth resource discovery and a process health
   endpoint for self-hosted deployments.
 - Add an explicit literature profile for Europe PMC and OpenAlex without a
   Web of Science key. Keep stdio and the seven-tool full profile as defaults.
 - Test real stdio and loopback HTTP with synthetic upstream responses.
+- Publish safe error codes and retry guidance in MCP error metadata. Report
+  provider timings and cache usage in stderr logs.
+- Reuse bounded, validated article data for repeated section reads and stop
+  Europe PMC pagination when the next cursor is absent or cannot advance.
 
 ## 0.1.0 — 2026-11-18
 

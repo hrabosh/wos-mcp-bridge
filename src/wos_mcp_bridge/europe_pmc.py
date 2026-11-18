@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from pydantic import ValidationError
 
 from .article_xml import extract_jats, plain_text, validate_text
+from .http_support import CacheExpiry
 from .literature_http import ApiClient, ApiOptions, JsonObject, LiteratureError
 from .models import ArticleRecord, Bibliography, JatsContent, LiteraturePage
 
@@ -23,7 +24,9 @@ def identifier(value: object) -> tuple[str, str]:
     value = re.sub(r"^PMID:", "", value, flags=re.I)
     if re.fullmatch(r"[1-9]\d{0,11}", value):
         return "pmid", value
-    raise LiteratureError("Use a DOI, PMID (digits or PMID:digits), or PMCID (PMCdigits).")
+    raise LiteratureError(
+        "Use a DOI, PMID (digits or PMID:digits), or PMCID (PMCdigits).", code="invalid_input"
+    )
 
 
 def safe_url(candidate: object) -> str | None:
@@ -161,22 +164,34 @@ class EuropePmcClient:
     async def aclose(self) -> None:
         await self._api.aclose()
 
-    async def search(self, query: str, limit: int = 10, cursor: str = "*") -> JsonObject:
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        cursor: str = "*",
+        *,
+        source_expiries: list[CacheExpiry | None] | None = None,
+    ) -> JsonObject:
         query = validate_text(query, "query", 4000)
         cursor = validate_text(cursor, "cursor", 2048)
         if type(limit) is not int or not 1 <= limit <= 50:
-            raise LiteratureError("limit must be an integer from 1 to 50.")
+            raise LiteratureError("limit must be an integer from 1 to 50.", code="invalid_input")
+        params = {
+            "query": query,
+            "format": "json",
+            "resultType": "core",
+            "pageSize": limit,
+            "cursorMark": cursor,
+        }
         data, retrieval = await self._api.get_json(
-            "search",
-            {
-                "query": query,
-                "format": "json",
-                "resultType": "core",
-                "pageSize": limit,
-                "cursorMark": cursor,
-            },
-            parse=lambda data: self._parse_search(data, limit),
+            "search", params, parse=lambda data: self._parse_search(data, limit)
         )
+        if source_expiries is not None:
+            source_expiries.append(self._api.cache_expiry("search", params))
+        # Europe PMC omits the token on the final page. An empty page or an
+        # unchanged token also offers no safe way to advance.
+        if not data["results"] or data["next_cursor"] == cursor:
+            data["next_cursor"] = None
         return {"query": query, "cursor": cursor, **data, "retrieval": retrieval}
 
     @staticmethod
@@ -201,14 +216,16 @@ class EuropePmcClient:
         except ValidationError:
             raise LiteratureError("Europe PMC returned malformed search pagination.") from None
 
-    async def resolve(self, value: str) -> JsonObject:
+    async def resolve(
+        self, value: str, *, source_expiries: list[CacheExpiry | None] | None = None
+    ) -> JsonObject:
         kind, key = identifier(value)
         query = {
             "doi": f'DOI:"{key}"',
             "pmid": f"EXT_ID:{key} AND SRC:MED",
             "pmcid": f"PMCID:{key}",
         }[kind]
-        result = await self.search(query, limit=10)
+        result = await self.search(query, limit=10, source_expiries=source_expiries)
         matches = [record for record in result["results"] if record[kind] == key]
         preferred = (
             max(
@@ -223,13 +240,18 @@ class EuropePmcClient:
         )
         return {"article": preferred, "retrieval": result["retrieval"]}
 
-    async def full_text(self, pmcid: str) -> JsonObject:
+    async def full_text(
+        self, pmcid: str, *, source_expiries: list[CacheExpiry | None] | None = None
+    ) -> JsonObject:
         kind, key = identifier(pmcid)
         if kind != "pmcid":
-            raise LiteratureError("Full text XML requires a PMCID.")
+            raise LiteratureError("Full text XML requires a PMCID.", code="invalid_input")
+        path = f"{key}/fullTextXML"
         data, retrieval = await self._api.get(
-            f"{key}/fullTextXML", parse=lambda raw: self._parse_full_text(raw, key)
+            path, parse=lambda raw: self._parse_full_text(raw, key)
         )
+        if source_expiries is not None:
+            source_expiries.append(self._api.cache_expiry(path))
         return {**data, "retrieval": retrieval}
 
     @staticmethod

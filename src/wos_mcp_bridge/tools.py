@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from time import perf_counter
 from typing import Annotated, cast
+from uuid import uuid4
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import ToolResult
+from fastmcp.utilities.logging import get_logger
+from mcp.types import CallToolRequestParams
 from pydantic import Field, ValidationError
 
 from .application import Services
+from .diagnostics import collect_provider_metrics
+from .errors import BridgeError
 from .literature_http import LiteratureError
 from .models import (
     ArticleResponse,
@@ -25,6 +34,63 @@ from .models import (
     WosSearchResponse,
 )
 from .wos_client import JsonObject, WosClient, WosError
+
+ERROR_METADATA = "io.github.hrabosh.wos-mcp-bridge/error"
+_OPERATIONS_LOGGER = get_logger("wos_mcp_bridge.operations")
+_TOOL_NAMES = {
+    "search",
+    "fetch",
+    "search_wos",
+    "search_literature",
+    "resolve_article",
+    "get_article",
+    "get_article_section",
+}
+
+
+def _error_result(error: BridgeError) -> ToolResult:
+    return ToolResult(content=str(error), is_error=True, meta={ERROR_METADATA: error.metadata()})
+
+
+class OperationLogging(Middleware):
+    """Report one safe diagnostic event per actual tool invocation."""
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[CallToolRequestParams],
+        call_next: CallNext[CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        started = perf_counter()
+        tool = context.message.name
+        outcome = "error"
+        with collect_provider_metrics() as providers:
+            try:
+                try:
+                    result = await call_next(context)
+                except FastMCPValidationError:
+                    message = "Check the required tool arguments, permitted ranges and formats."
+                    if tool == "fetch":
+                        message = "Use a WOS: accession ID returned by search."
+                    result = _error_result(BridgeError(message, code="invalid_input"))
+                outcome = (
+                    (result.meta or {}).get(ERROR_METADATA, {}).get("code", "error")
+                    if result.is_error
+                    else "ok"
+                )
+                return result
+            except asyncio.CancelledError:
+                outcome = "cancelled"
+                raise
+            finally:
+                _OPERATIONS_LOGGER.info(
+                    "operation_id=%s tool=%s outcome=%s duration_ms=%d providers=%s",
+                    uuid4().hex,
+                    tool if tool in _TOOL_NAMES else "unknown",
+                    outcome,
+                    round((perf_counter() - started) * 1000),
+                    providers,
+                )
+
 
 ANNOTATIONS = {
     "readOnlyHint": True,
@@ -124,9 +190,9 @@ def _result(data: JsonObject, model: type[OutputModel]) -> ToolResult:
         payload = model.model_validate(data).model_dump(mode="json", exclude_unset=True)
     except ValidationError:
         # Pydantic error text may include untrusted payloads or credentials.
-        raise ToolError(
-            "The tool produced an invalid response. Please report this error."
-        ) from None
+        return _error_result(
+            BridgeError("The tool produced an invalid response. Please report this error.")
+        )
     return ToolResult(
         content=json.dumps(payload, ensure_ascii=False, allow_nan=False), structured_content=payload
     )
@@ -158,7 +224,7 @@ def register_wos_tools(mcp: FastMCP) -> None:
         try:
             found = await client.search(query)
         except WosError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)
         return _result(
             {
                 "results": [
@@ -177,7 +243,7 @@ def register_wos_tools(mcp: FastMCP) -> None:
         try:
             return _result(await client.fetch(id), FetchResponse)
         except WosError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)
 
     @mcp.tool(
         annotations=ANNOTATIONS,
@@ -219,7 +285,7 @@ def register_wos_tools(mcp: FastMCP) -> None:
                 await client.search(query, limit=limit, page=page, sort=sort), WosSearchResponse
             )
         except WosError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)
 
 
 def register_literature_tools(mcp: FastMCP) -> None:
@@ -246,7 +312,7 @@ def register_literature_tools(mcp: FastMCP) -> None:
                 await client.search(query, limit, cursor, max_chars), LiteratureSearchResponse
             )
         except LiteratureError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)
 
     @mcp.tool(
         annotations=ANNOTATIONS,
@@ -267,7 +333,7 @@ def register_literature_tools(mcp: FastMCP) -> None:
         try:
             return _result(await client.resolve(identifier, max_chars), ArticleResponse)
         except LiteratureError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)
 
     @mcp.tool(
         annotations=ANNOTATIONS,
@@ -299,7 +365,7 @@ def register_literature_tools(mcp: FastMCP) -> None:
                 await client.get_article(identifier, max_chars, include_text), ArticleResponse
             )
         except LiteratureError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)
 
     @mcp.tool(
         annotations=ANNOTATIONS,
@@ -332,4 +398,4 @@ def register_literature_tools(mcp: FastMCP) -> None:
                 await client.get_section(identifier, section_id, offset, max_chars), SectionResponse
             )
         except LiteratureError as exc:
-            raise ToolError(str(exc)) from None
+            return _error_result(exc)

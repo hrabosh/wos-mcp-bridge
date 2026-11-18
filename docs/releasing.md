@@ -133,7 +133,7 @@ Use the actual built filename when the version changes. Omit `--version` to star
 stdio with credentials supplied through the environment. This local-wheel command
 works before a PyPI release; it does not imply that a public package exists.
 
-## First public release checklist
+## Release checklist
 
 - Review the README, release notes, contribution guide and security policy.
   Confirm the GitHub **Report a vulnerability** form is available and reaches a
@@ -141,14 +141,9 @@ works before a PyPI release; it does not imply that a public package exists.
   credentials and review stored fixtures. Revoke any confirmed exposed
   credential at its provider. Check that LICENSE, NOTICE and package metadata
   agree on Apache-2.0. Provider data and article text carry separate terms.
-- Confirm ownership and availability of `wos-mcp-bridge` on PyPI immediately before
-  release. The JSON API returned 404 on 2026-11-18; this was only a dated lookup,
-  not a reservation or approval to publish. Rename metadata/entrypoints/docs together
-  if the name cannot be used.
-- Set the release version in `pyproject.toml`, refresh the lock and exports,
-  and replace the release-candidate heading in the changelog with the released
-  version and date. Check that the README describes the published installation
-  path only after the package is available.
+- Confirm that the intended version is available on the existing PyPI project.
+  Set the release version in `pyproject.toml` and `server.json`, refresh the
+  lock and exports, and add the version and date to the changelog.
 - Complete review, the offline suite and all artifact checks. Record the commit,
   interpreter, lock, workflow result and artifact hashes with the release notes.
 - Verify that the GitHub `pypi` environment requires maintainer approval and
@@ -179,7 +174,8 @@ works before a PyPI release; it does not imply that a public package exists.
 Keep the version in `server.json` and its PyPI package entry aligned with
 `pyproject.toml`. The `mcp-name` marker in the README must be present in the PyPI
 project description before Registry publication. The manifest advertises locally
-installed stdio with a user-supplied WoS key. Check the published build before
+installed stdio, including the profile selector. WoS tools require a
+user-supplied Clarivate key. Check the published build before
 listing it. [PyPI ownership verification](https://modelcontextprotocol.io/registry/package-types#pypi-packages)
 
 From the release checkout, authenticate as the owner of the GitHub namespace and
