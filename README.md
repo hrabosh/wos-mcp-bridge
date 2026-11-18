@@ -177,7 +177,7 @@ Run the opt-in integration test against a real OA article (DOI
 `10.7717/peerj.4375`, also used in OpenAlex's API documentation):
 
 ```bash
-RUN_LITERATURE_INTEGRATION=1 python -m pytest -q -m integration
+RUN_LITERATURE_INTEGRATION=1 uv run --locked python -m pytest -q -m integration
 ```
 
 This test requires outbound HTTPS to Europe PMC and OpenAlex. It verifies exact
@@ -190,7 +190,7 @@ Start the local stdio server from Bash/WSL:
 ```bash
 read -rsp 'Clarivate Starter API key: ' WOS_API_KEY; echo
 export WOS_API_KEY
-python server.py
+uv run --locked wos-mcp-bridge
 ```
 
 This waits for an **MCP client over stdin/stdout**, not an interactive search prompt.

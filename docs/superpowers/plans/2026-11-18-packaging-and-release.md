@@ -54,8 +54,8 @@
 
 - [x] Add pinned-action workflow build/check/install stages and separated publication job. Check workflow syntax and version/tag rejection through the checker.
 - [x] Document locked setup, export regeneration, build/install, pipx, source/host compatibility, first release and bad-version recovery. Record PyPI name availability as dated, not reserved.
-- [ ] Run full offline suite, lint/format, build/archive checks and installed smoke; request one read-only independent review.
-- [ ] Fix material review findings with regressions, commit and preserve the local branch/worktree.
+- [x] Run full offline suite, lint/format, build/archive checks and installed smoke; request one read-only independent review.
+- [x] Fix material review findings with regressions, commit and preserve the local branch/worktree.
 
 ## Execution record
 
@@ -64,3 +64,11 @@ Base: 8fc07b1. User approved Apache-2.0 during implementation planning. No appli
 - Task 1: b996bdf; module --version regression observed RED then GREEN without credentials outside checkout. Locked environment: 255 passed, 1 opt-in live integration skipped. Generated exports match the lock.
 - Task 2: b2631ca; real-archive checker scenarios observed RED then GREEN. Built wheel/source pair passed strict Twine, metadata/module/license/content checks and separate installed module/console/stdio checks outside checkout. pipx ran the built wheel with --version using temporary pipx directories.
 - Task 3: actionlint v1.7.12 (official checksum verified) accepted both workflows. Release publication is explicit/manual/tag-bound and consumes checked artifacts in an isolated OIDC job; external PyPI/environment setup is documented, not performed.
+
+- Independent review of 8fc07b1..fe55bb6 found two release-gate gaps and two affected README commands. All were fixed:
+  - Untracked allowed-extension local files: three failing real-archive regressions now pass; the checker uses Git's tracked inventory and rejects a real contaminated build. This release-only checker requires a Git checkout; source installation still needs no Git.
+  - Missing requirements export: reproduced regeneration plus git diff incorrectly succeeding in a temporary repository; git ls-files --error-unmatch now fails before regeneration in both workflows.
+  - README integration and stdio commands now use uv. Treated as a functional fix because the recommended setup leaves the shell outside the project's environment. Integration collection and the actual uv stdio command were verified without live API calls.
+- Final offline suite: 258 passed, 1 opt-in live test skipped. Ruff lint/format, actionlint and export drift/tracking checks pass.
+- Rebuilt reviewed wheel/source pair: strict Twine, metadata/module/license/path checks, separate installed imports/module+console versions/stdio schemas and errors all pass. Pipx runs the exact reviewed wheel with --version.
+- No deferred findings or declined judgments. No PyPI publication, remote configuration, tag push, merge or visibility change was performed. Branch/worktree remain local for review.

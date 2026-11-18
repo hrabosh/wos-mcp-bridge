@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import stat
+import subprocess
 import tarfile
 import tomllib
 import zipfile
@@ -40,14 +41,34 @@ EGG_INFO_FILES = {
 WHEEL_INFO_FILES = {"METADATA", "WHEEL", "RECORD", "entry_points.txt", "top_level.txt"}
 
 
-def _source_file(name: str) -> bool:
+def _tracked_files(root: Path) -> set[str]:
+    top = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != root.resolve():
+        raise ValueError("Distribution validation requires the project Git checkout.")
+    files = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return set(files.stdout.rstrip("\0").split("\0"))
+
+
+def _source_file(name: str, tracked: set[str]) -> bool:
     path = PurePosixPath(name)
     if name in SOURCE_FILES:
-        return True
+        return name in tracked or name in {"PKG-INFO", "setup.cfg"}
     if path.parts[:2] == ("src", "wos_mcp_bridge"):
-        return path.suffix == ".py"
+        return name in tracked and path.suffix == ".py"
     if path.parts[:2] == ("src", "wos_mcp_bridge.egg-info"):
         return len(path.parts) == 3 and path.name in EGG_INFO_FILES
+    if name not in tracked:
+        return False
     if path.parts[0] in {"scripts", "tests"}:
         return path.suffix == ".py"
     return path.parts[0] == "docs" and "superpowers" not in path.parts and path.suffix == ".md"
@@ -78,6 +99,7 @@ def _metadata(raw: bytes, project: dict) -> None:
 
 def check_distributions(directory: Path, project_root: Path, tag: str | None = None) -> None:
     project = tomllib.loads((project_root / "pyproject.toml").read_text())["project"]
+    tracked = _tracked_files(project_root)
     version = project["version"]
     if tag is not None and tag != f"v{version}":
         raise ValueError(f"Release tag must be v{version}.")
@@ -86,9 +108,9 @@ def check_distributions(directory: Path, project_root: Path, tag: str | None = N
     if {path.name for path in directory.iterdir() if path.name != ".gitignore"} != expected:
         raise ValueError("Expected exactly one matching wheel and source distribution.")
     modules = {
-        path.relative_to(project_root / "src").as_posix(): path.read_bytes()
-        for path in (project_root / "src" / "wos_mcp_bridge").rglob("*.py")
-        if "__pycache__" not in path.parts
+        name.removeprefix("src/"): (project_root / name).read_bytes()
+        for name in tracked
+        if name.startswith("src/wos_mcp_bridge/") and name.endswith(".py")
     }
     info = f"{stem}.dist-info"
     wheel_files = {}
@@ -117,7 +139,7 @@ def check_distributions(directory: Path, project_root: Path, tag: str | None = N
             if entry.isdir():
                 continue
             name = path.relative_to(stem).as_posix()
-            if not entry.isfile() or not _source_file(name):
+            if not entry.isfile() or not _source_file(name, tracked):
                 raise ValueError(f"Unexpected source file: {entry.name}")
             stream = archive.extractfile(entry)
             if stream is None:

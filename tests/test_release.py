@@ -58,14 +58,26 @@ def distributions(tmp_path):
     output.mkdir()
     (output / ".gitignore").write_text("*\n")
 
-    def run(*, wheel_extra=None, sdist_extra=None, omit=None, tag="v1.2.3"):
+    subprocess.run(["git", "init", "--quiet", str(project)], check=True)
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+
+    def run(*, wheel_extra=None, sdist_extra=None, omit=None, tag="v1.2.3", local_file=None):
         wheel_files = {**wheel, **(wheel_extra or {})}
+        source_files = {**sdist, **(sdist_extra or {})}
+        if local_file:
+            content = b"SYNTHETIC_LOCAL_SECRET"
+            path = project / local_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            source_files[local_file] = content
+            if local_file.startswith("src/wos_mcp_bridge/"):
+                wheel_files[local_file.removeprefix("src/")] = content
         wheel_files.pop(omit, None)
         with zipfile.ZipFile(output / "wos_mcp_bridge-1.2.3-py3-none-any.whl", "w") as archive:
             for name, content in wheel_files.items():
                 archive.writestr(name, content)
         with tarfile.open(output / "wos_mcp_bridge-1.2.3.tar.gz", "w:gz") as archive:
-            for name, content in {**sdist, **(sdist_extra or {})}.items():
+            for name, content in source_files.items():
                 entry = tarfile.TarInfo(f"wos_mcp_bridge-1.2.3/{name}")
                 entry.size = len(content)
                 archive.addfile(entry, io.BytesIO(content))
@@ -113,3 +125,18 @@ def test_release_rejects_inconsistent_source_metadata(distributions):
     result = distributions(sdist_extra={"PKG-INFO": b"Name: wos-mcp-bridge\nVersion: 9.9.9\n"})
     assert result.returncode != 0
     assert "metadata" in result.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "docs/local-credentials.md",
+        "tests/local_credentials.py",
+        "src/wos_mcp_bridge/local_settings.py",
+    ],
+)
+def test_release_rejects_untracked_local_files(distributions, path):
+    result = distributions(local_file=path)
+    assert result.returncode != 0
+    assert "unexpected" in result.stderr.lower()
+    assert "SYNTHETIC_LOCAL_SECRET" not in result.stderr

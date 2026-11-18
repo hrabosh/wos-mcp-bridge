@@ -44,6 +44,7 @@ jobs:
           uv sync --locked --python 3.12
       - name: Verify generated pip exports
         run: |
+          git ls-files --error-unmatch requirements.txt requirements-dev.txt > /dev/null
           uv export --locked --no-dev --no-emit-project --no-hashes --output-file requirements.txt > /dev/null
           uv export --locked --no-emit-project --no-hashes --output-file requirements-dev.txt > /dev/null
           git diff --exit-code -- requirements.txt requirements-dev.txt

@@ -77,8 +77,12 @@ uv run --locked python scripts/smoke_dist.py dist
 ```
 
 `uv build` creates a source distribution and builds the wheel from it. The checker
-compares metadata, dependency ranges, all package modules and license files with
-the checkout. It rejects unintended archive paths, local secrets/caches and links.
+compares metadata, dependency ranges, all tracked package modules and license files
+with the checkout. Validation requires the project Git checkout and uses Git's index
+as the intended file inventory. It rejects untracked local Python/Markdown files as
+well as unintended archive paths, local secrets/caches and links. A raw local build
+is not a verified release until this check passes. Source distributions still build
+and install without Git; release validation is deliberately performed in the checkout.
 The source archive includes synthetic tests, release scripts and user documentation;
 it excludes agent planning files. The wheel contains the package and distribution
 metadata/license files.
